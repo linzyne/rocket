@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: rocket
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: COUPANG_USER_ID
+        sync: false
+      - key: COUPANG_USER_PW
+        sync: false
+      - key: AUTO_UPDATE_ENABLED
+        value: "true"
+      - key: AUTO_UPDATE_HOUR
+        value: "16"
+      - key: AUTO_UPDATE_MINUTE
+        value: "28"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: HEADLESS_MODE
+        value: "true"
+    healthCheckPath: /health
