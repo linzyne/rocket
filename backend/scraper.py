@@ -1184,31 +1184,33 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
 
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
-        time.sleep(5)
+        time.sleep(3)
         log(f"📌 접속 후 URL: {driver.current_url}")
 
-        # 1. 로그인 단계
-        log("🔐 [2단계] 로그인 시도 중...")
+        # 1. 로그인 단계 - 로그인 폼이 렌더링될 때까지 명시적 대기
+        log("🔐 [2단계] 로그인 폼 대기 중 (최대 20초)...")
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
         try:
+            pw_input = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//input[@type='password']"))
+            )
             id_input = driver.find_elements(By.XPATH, "//input[@type='text' or @name='username' or @id='username']")
-            pw_input = driver.find_elements(By.XPATH, "//input[@type='password']")
+            if not id_input:
+                id_input = [el for el in driver.find_elements(By.TAG_NAME, "input") if el.get_attribute('type') != 'password']
 
-            if id_input and pw_input:
+            if id_input:
                 id_input[0].clear()
                 id_input[0].send_keys(user_id)
-                pw_input[0].clear()
-                pw_input[0].send_keys(user_pw)
-                pw_input[0].send_keys(Keys.ENTER)
+                pw_input.clear()
+                pw_input.send_keys(user_pw)
+                pw_input.send_keys(Keys.ENTER)
                 log("✅ 로그인 정보 입력 완료!")
             else:
-                all_inputs = driver.find_elements(By.TAG_NAME, "input")
-                log(f"⚠️ 기본 로그인 폼 못 찾음. input 개수: {len(all_inputs)}")
-                if len(all_inputs) >= 2:
-                    all_inputs[0].send_keys(user_id)
-                    all_inputs[1].send_keys(user_pw)
-                    all_inputs[1].send_keys(Keys.ENTER)
+                log("⚠️ ID 입력필드를 찾을 수 없음")
         except Exception as e:
-            log(f"⚠️ 로그인 입력 중 오류: {e}")
+            log(f"⚠️ 로그인 폼 대기 실패: {e}")
+            log(f"📌 페이지 제목: {driver.title}")
 
         time.sleep(7)
         log(f"📌 로그인 후 URL: {driver.current_url}")
