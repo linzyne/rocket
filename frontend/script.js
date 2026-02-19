@@ -137,6 +137,74 @@ function saveHistory() {
     }
 }
 
+/**
+ * Supabase(원격 서버)에서 모든 캐시 데이터를 로드하여 localStorage에 병합
+ * Vercel 등 원격 환경에서도 데이터를 볼 수 있게 합니다.
+ */
+async function loadAllCachedData() {
+    const endpoints = [
+        { url: `${REMOTE_API}/api/cached-stock`, key: 'stock' },
+        { url: `${REMOTE_API}/api/cached-receiving`, key: 'receiving' },
+        { url: `${REMOTE_API}/api/cached-ad`, key: 'ad' },
+        { url: `${REMOTE_API}/api/cached-deduction`, key: 'deduction' }
+    ];
+
+    let loaded = 0;
+    const results = await Promise.allSettled(endpoints.map(ep => fetch(ep.url).then(r => r.json())));
+
+    results.forEach((result, i) => {
+        if (result.status !== 'fulfilled' || !result.value.success) return;
+        const data = result.value.data;
+        const key = endpoints[i].key;
+
+        if (key === 'stock' && data && typeof data === 'object') {
+            // 날짜별 재고 데이터 병합
+            Object.keys(data).forEach(date => {
+                if (!stockHistory[date]) {
+                    stockHistory[date] = data[date];
+                }
+            });
+            loaded++;
+        } else if (key === 'receiving' && data && typeof data === 'object') {
+            // 날짜별 입고 데이터 병합
+            Object.keys(data).forEach(date => {
+                if (!receivingHistory[date]) {
+                    receivingHistory[date] = data[date];
+                }
+            });
+            loaded++;
+        } else if (key === 'ad' && data && typeof data === 'object') {
+            // 날짜별 광고 데이터 병합
+            Object.keys(data).forEach(date => {
+                if (!adHistory[date]) {
+                    adHistory[date] = data[date];
+                }
+            });
+            loaded++;
+        } else if (key === 'deduction' && Array.isArray(data) && data.length > 0) {
+            // 정산 데이터 병합 (deductionData는 정산내역/로켓발주 탭에서 사용)
+            if (typeof deductionData !== 'undefined' && (!deductionData || deductionData.length === 0)) {
+                deductionData = data;
+                // localStorage에도 저장
+                try {
+                    localStorage.setItem(DEDUCTION_STORAGE_KEY, JSON.stringify({
+                        data: data,
+                        headers: data.length > 0 ? Object.keys(data[0]).filter(k => !k.startsWith('_')) : [],
+                        lastUpdate: new Date().toISOString()
+                    }));
+                } catch(e) {}
+            }
+            loaded++;
+        }
+    });
+
+    if (loaded > 0) {
+        saveHistory();
+        console.log(`📡 서버에서 ${loaded}종 데이터 로드 완료`);
+    }
+    return loaded;
+}
+
 function getTodayString() {
     const today = new Date();
     return today.toISOString().split('T')[0];
@@ -3185,6 +3253,20 @@ document.addEventListener('DOMContentLoaded', () => {
         showResult();
         renderDashboard();
     }
+
+    // 서버에서 캐시 데이터 로드 (Vercel/원격 환경에서도 데이터 표시)
+    loadAllCachedData().then(loaded => {
+        if (loaded > 0) {
+            // 데이터가 새로 로드되었으면 화면 갱신
+            if (Object.keys(stockHistory).length > 0) {
+                showResult();
+                renderDashboard();
+                if (typeof renderPivotTable === 'function') renderPivotTable();
+                if (typeof updateStats === 'function') updateStats();
+            }
+            showToast(`서버에서 데이터 ${loaded}종 로드 완료`, 'success');
+        }
+    }).catch(e => console.log('서버 캐시 로드 실패 (오프라인 모드):', e));
 
     // 비밀번호 입력창에서 엔터키 입력 시 로그인 실행
     if (elements.userPwInput) {

@@ -121,6 +121,26 @@ async def fetch_stock(request: LoginRequest):
         )
         
         if result["success"]:
+            # Supabase에 재고 데이터 저장 (날짜별 누적)
+            if result.get("data"):
+                try:
+                    from db import save_data, load_data
+                    from datetime import datetime
+                    today = datetime.now().strftime('%Y-%m-%d')
+                    existing = load_data("stock_history") or {}
+                    existing[today] = result["data"]
+                    save_data("stock_history", existing)
+                    print(f"✅ Supabase에 재고 데이터 저장 완료 ({today}, {len(result['data'])}건)")
+                    # 광고 데이터도 함께 왔으면 저장
+                    if result.get("ad_data"):
+                        from datetime import timedelta
+                        ad_existing = load_data("ad_history") or {}
+                        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+                        ad_existing[yesterday] = result["ad_data"]
+                        save_data("ad_history", ad_existing)
+                        print(f"✅ Supabase에 광고 데이터 저장 완료 ({yesterday})")
+                except Exception as db_err:
+                    print(f"⚠️ Supabase 재고 저장 실패: {db_err}")
             return StockResponse(
                 success=True,
                 data=result["data"],
@@ -134,7 +154,7 @@ async def fetch_stock(request: LoginRequest):
                 success=False,
                 error=result.get("error", "알 수 없는 오류가 발생했습니다.")
             )
-            
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -158,6 +178,24 @@ async def fetch_receiving(request: LoginRequest):
         )
         
         if result["success"]:
+            # Supabase에 입고 데이터 저장 (날짜별 누적)
+            if result.get("data"):
+                try:
+                    from db import save_data, load_data
+                    from datetime import datetime
+                    today = datetime.now().strftime('%Y-%m-%d')
+                    existing = load_data("receiving_history") or {}
+                    # 입고 데이터를 SKU별로 합산
+                    today_receiving = {}
+                    for item in result["data"]:
+                        sku = item.get("sku_name", "")
+                        if sku:
+                            today_receiving[sku] = today_receiving.get(sku, 0) + item.get("quantity", 0)
+                    existing[today] = today_receiving
+                    save_data("receiving_history", existing)
+                    print(f"✅ Supabase에 입고 데이터 저장 완료 ({today}, {len(today_receiving)}건)")
+                except Exception as db_err:
+                    print(f"⚠️ Supabase 입고 저장 실패: {db_err}")
             return {
                 "success": True,
                 "data": result.get("data", []),
@@ -170,7 +208,7 @@ async def fetch_receiving(request: LoginRequest):
                 "success": False,
                 "error": result.get("error", "알 수 없는 오류가 발생했습니다.")
             }
-            
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -356,6 +394,18 @@ async def fetch_ad(request: LoginRequest):
         )
         
         if result and result["success"]:
+            # Supabase에 광고 데이터 저장 (날짜별 누적)
+            if result.get("data"):
+                try:
+                    from db import save_data, load_data
+                    from datetime import datetime, timedelta
+                    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+                    existing = load_data("ad_history") or {}
+                    existing[yesterday] = result["data"]
+                    save_data("ad_history", existing)
+                    print(f"✅ Supabase에 광고 데이터 저장 완료 ({yesterday})")
+                except Exception as db_err:
+                    print(f"⚠️ Supabase 광고 저장 실패: {db_err}")
             return {
                 "success": True,
                 "data": result["data"],
@@ -369,6 +419,52 @@ async def fetch_ad(request: LoginRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================================
+# 캐시 데이터 조회 API (Supabase에서 로드)
+# ========================================
+
+@app.get("/api/cached-stock")
+async def get_cached_stock():
+    """Supabase에 저장된 재고 히스토리 데이터를 반환합니다."""
+    try:
+        from db import load_data
+        cached = load_data("stock_history")
+        if cached is not None:
+            return {"success": True, "data": cached}
+        return {"success": False, "data": {}, "error": "캐시된 재고 데이터가 없습니다."}
+    except Exception as e:
+        print(f"⚠️ 재고 캐시 로드 실패: {e}")
+        return {"success": False, "data": {}, "error": str(e)}
+
+
+@app.get("/api/cached-receiving")
+async def get_cached_receiving():
+    """Supabase에 저장된 입고 히스토리 데이터를 반환합니다."""
+    try:
+        from db import load_data
+        cached = load_data("receiving_history")
+        if cached is not None:
+            return {"success": True, "data": cached}
+        return {"success": False, "data": {}, "error": "캐시된 입고 데이터가 없습니다."}
+    except Exception as e:
+        print(f"⚠️ 입고 캐시 로드 실패: {e}")
+        return {"success": False, "data": {}, "error": str(e)}
+
+
+@app.get("/api/cached-ad")
+async def get_cached_ad():
+    """Supabase에 저장된 광고 히스토리 데이터를 반환합니다."""
+    try:
+        from db import load_data
+        cached = load_data("ad_history")
+        if cached is not None:
+            return {"success": True, "data": cached}
+        return {"success": False, "data": {}, "error": "캐시된 광고 데이터가 없습니다."}
+    except Exception as e:
+        print(f"⚠️ 광고 캐시 로드 실패: {e}")
+        return {"success": False, "data": {}, "error": str(e)}
 
 
 if __name__ == "__main__":
