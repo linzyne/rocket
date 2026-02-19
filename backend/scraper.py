@@ -1171,8 +1171,7 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
     try:
         log("🚀 [1단계] 브라우저 실행 중...")
         options = Options()
-        if HEADLESS_MODE:
-            options.add_argument("--headless=new")
+        # headless 사용 안 함 (쿠팡 봇 감지 우회 - 재고/입고와 동일)
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-blink-features=AutomationControlled")

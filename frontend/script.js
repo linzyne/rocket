@@ -2132,12 +2132,22 @@ function initDashDates() {
     if (endInput && !endInput.value) endInput.value = getDashToday();
 }
 
-// 날짜 변경 시 자동 렌더링
+// 날짜 변경 시 자동 렌더링 (수동 날짜 선택 시 버튼 활성화 해제)
 document.addEventListener('change', (e) => {
     if (e.target.id === 'dashStartDate' || e.target.id === 'dashEndDate') {
+        document.querySelectorAll('.dash-period-btn').forEach(btn => btn.classList.remove('active'));
         renderDashboard();
     }
 });
+
+// 대시보드 날짜 버튼 활성화 상태 업데이트
+function updateDashPeriodBtnActive(activeId) {
+    document.querySelectorAll('.dash-period-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    const activeBtn = document.getElementById(activeId);
+    if (activeBtn) activeBtn.classList.add('active');
+}
 
 // 빠른 날짜 선택 버튼 이벤트
 document.addEventListener('click', (e) => {
@@ -2145,21 +2155,32 @@ document.addEventListener('click', (e) => {
     const endInput = document.getElementById('dashEndDate');
     if (!startInput || !endInput) return;
 
-    if (e.target.id === 'dashTodayBtn') {
+    if (e.target.id === 'dashYesterdayBtn' || e.target.closest('#dashYesterdayBtn')) {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+        startInput.value = yStr;
+        endInput.value = yStr;
+        updateDashPeriodBtnActive('dashYesterdayBtn');
+        renderDashboard();
+    } else if (e.target.id === 'dashTodayBtn' || e.target.closest('#dashTodayBtn')) {
         startInput.value = getDashToday();
         endInput.value = getDashToday();
+        updateDashPeriodBtnActive('dashTodayBtn');
         renderDashboard();
-    } else if (e.target.id === 'dashWeekBtn') {
+    } else if (e.target.id === 'dashWeekBtn' || e.target.closest('#dashWeekBtn')) {
         const end = new Date();
         const start = new Date();
         start.setDate(start.getDate() - 6);
         startInput.value = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
         endInput.value = getDashToday();
+        updateDashPeriodBtnActive('dashWeekBtn');
         renderDashboard();
-    } else if (e.target.id === 'dashMonthBtn') {
+    } else if (e.target.id === 'dashMonthBtn' || e.target.closest('#dashMonthBtn')) {
         const now = new Date();
         startInput.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
         endInput.value = getDashToday();
+        updateDashPeriodBtnActive('dashMonthBtn');
         renderDashboard();
     }
 });
@@ -2550,6 +2571,44 @@ function updateDeductionStats(count = null) {
 // 드롭다운 변경 이벤트 리스너
 document.addEventListener('change', (e) => {
     if (e.target.id === 'deductionYearFilter' || e.target.id === 'deductionMonthFilter') {
+        updateDeductionPeriodLabel();
+        renderDeductionTable();
+    }
+});
+
+// 정산내역 기간 라벨 업데이트
+function updateDeductionPeriodLabel() {
+    const yearFilter = document.getElementById('deductionYearFilter');
+    const monthFilter = document.getElementById('deductionMonthFilter');
+    const label = document.getElementById('deductionPeriodLabel');
+    if (yearFilter && monthFilter && label) {
+        label.textContent = `${yearFilter.value}년 ${monthFilter.value}월`;
+    }
+}
+
+// 정산내역 ◀▶ 월 이동 버튼
+document.addEventListener('click', (e) => {
+    const yearFilter = document.getElementById('deductionYearFilter');
+    const monthFilter = document.getElementById('deductionMonthFilter');
+    if (!yearFilter || !monthFilter) return;
+
+    if (e.target.id === 'prevDeductionMonthBtn' || e.target.closest('#prevDeductionMonthBtn')) {
+        let y = parseInt(yearFilter.value);
+        let m = parseInt(monthFilter.value);
+        m--;
+        if (m < 1) { m = 12; y--; }
+        yearFilter.value = y;
+        monthFilter.value = m;
+        updateDeductionPeriodLabel();
+        renderDeductionTable();
+    } else if (e.target.id === 'nextDeductionMonthBtn' || e.target.closest('#nextDeductionMonthBtn')) {
+        let y = parseInt(yearFilter.value);
+        let m = parseInt(monthFilter.value);
+        m++;
+        if (m > 12) { m = 1; y++; }
+        yearFilter.value = y;
+        monthFilter.value = m;
+        updateDeductionPeriodLabel();
         renderDeductionTable();
     }
 });
@@ -2789,6 +2848,12 @@ function renderAdTab() {
     const monthStr = formatMonth(currentAdMonthDate);
     adElements.monthInput.value = monthStr;
 
+    // 기간 라벨 업데이트
+    const adPeriodLabel = document.getElementById('adPeriodLabel');
+    if (adPeriodLabel) {
+        adPeriodLabel.textContent = `${currentAdMonthDate.getFullYear()}년 ${currentAdMonthDate.getMonth() + 1}월`;
+    }
+
     updateAdTable();
 }
 
@@ -2961,6 +3026,7 @@ document.addEventListener('DOMContentLoaded', () => {
         deductionYearFilter.value = marginYear;
         deductionMonthFilter.value = marginMonth;
     }
+    updateDeductionPeriodLabel();
 
     // 날짜(월) 변경
     if (adElements.monthInput) {

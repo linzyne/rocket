@@ -278,6 +278,12 @@ body::before {
     border-color: var(--text-secondary);
 }
 
+.dash-period-btn.active {
+    background: var(--accent-gradient);
+    color: white;
+    border-color: transparent;
+}
+
 .btn-icon {
     transition: transform var(--transition-fast);
 }
