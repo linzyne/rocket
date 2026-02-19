@@ -6,9 +6,10 @@
 // ========================================
 // 설정
 // ========================================
-const API_BASE_URL = window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
-    : 'https://rocket-3tpn.onrender.com';
+// 수집(크롤링)은 반드시 로컬 백엔드, 조회(캐시)는 Render
+const LOCAL_API = 'http://localhost:8000';
+const REMOTE_API = 'https://rocket-3tpn.onrender.com';
+const API_BASE_URL = LOCAL_API;  // 크롤링용 (로컬 백엔드 필요)
 const STORAGE_KEY = 'coupang_stock_history';
 const RECEIVING_STORAGE_KEY = 'coupang_receiving_history';
 const AD_STORAGE_KEY = 'coupang_ad_history';
@@ -1337,7 +1338,7 @@ async function loadCachedDeductionAndRender() {
     }
     // localStorage에도 없으면 백엔드에서 가져오기
     try {
-        const res = await fetch(`${API_BASE_URL}/api/cached-deduction`);
+        const res = await fetch(`${REMOTE_API}/api/cached-deduction`);
         const result = await res.json();
         if (result.success && result.data && result.data.length > 0) {
             deductionData = result.data;
@@ -1947,13 +1948,16 @@ document.addEventListener('click', async (e) => {
         showToast('전체 정산 데이터 수집 중... (2025.4~)', 'info');
 
         try {
+            console.log('📡 전체 수집 요청 시작:', `${API_BASE_URL}/api/fetch-deduction`);
             const res = await fetch(`${API_BASE_URL}/api/fetch-deduction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userId, user_pw: userPw, start_year: 2025, start_month: 4 })
             });
+            console.log('📡 서버 응답 상태:', res.status);
             const result = await res.json();
-            if (result.success && result.data) {
+            console.log('📡 서버 응답 데이터:', JSON.stringify(result).substring(0, 500));
+            if (result.success && result.data && result.data.length > 0) {
                 // 기존 데이터와 병합 (중복 제거)
                 const getKey = (r) => `${r['계산서 번호']}_${r['증빙일']}_${r['정산금액']}`;
                 const existingKeys = new Set(deductionData.map(getKey));
@@ -1969,11 +1973,13 @@ document.addEventListener('click', async (e) => {
                 renderRocketTab();
                 showToast(`전체 수집 완료! 신규 ${newCount}건 추가 (총 ${deductionData.length}건)`, 'success');
             } else {
-                showToast('전체 수집 실패: ' + (result.error || ''), 'error');
+                const errMsg = result.error || result.message || '데이터가 0건입니다';
+                console.error('❌ 전체 수집 실패:', errMsg);
+                showToast('전체 수집 실패: ' + errMsg, 'error');
             }
         } catch (error) {
-            console.error('전체 수집 에러:', error);
-            showToast('전체 수집 중 오류 발생', 'error');
+            console.error('❌ 전체 수집 에러:', error);
+            showToast('전체 수집 중 오류 발생: ' + error.message, 'error');
         }
         if (btn) { btn.disabled = false; btn.innerHTML = '<span>📥</span> 전체 수집 (2025.4~)'; }
     }

@@ -234,6 +234,19 @@ async def fetch_deduction(request: DeductionRequest):
         )
         
         if result["success"]:
+            # 크롤링 성공 시 Supabase에 자동 저장
+            if result.get("data"):
+                try:
+                    from db import save_data
+                    save_data("deduction_data", {
+                        "success": True,
+                        "data": result["data"],
+                        "count": result.get("count", 0),
+                        "timestamp": result.get("timestamp")
+                    })
+                    print(f"✅ Supabase에 정산 데이터 {len(result['data'])}건 저장 완료")
+                except Exception as db_err:
+                    print(f"⚠️ Supabase 저장 실패: {db_err}")
             return {
                 "success": True,
                 "data": result.get("data", []),
@@ -246,7 +259,7 @@ async def fetch_deduction(request: DeductionRequest):
                 "success": False,
                 "error": result.get("error", "알 수 없는 오류가 발생했습니다.")
             }
-            
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
