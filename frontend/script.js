@@ -8,7 +8,7 @@
 // ========================================
 const API_BASE_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:8000'
-    : 'https://rocket.onrender.com';  // Render 배포 후 실제 URL로 변경
+    : 'https://rocket-3tpn.onrender.com';
 const STORAGE_KEY = 'coupang_stock_history';
 const RECEIVING_STORAGE_KEY = 'coupang_receiving_history';
 const AD_STORAGE_KEY = 'coupang_ad_history';

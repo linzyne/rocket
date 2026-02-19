@@ -4,9 +4,7 @@ Selenium을 사용하여 쿠팡 광고 대시보드에서 재고 데이터를 �
 """
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 import os
 import time
 import re
@@ -129,8 +127,7 @@ def fetch_stock_data(user_id: str, user_pw: str, debug_mode: bool = True, includ
         options.add_experimental_option("useAutomationExtension", False)
 
         # ChromeDriver 자동 설치 및 실행
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         driver.get("https://advertising.coupang.com/marketing/product-dashboard")
@@ -753,8 +750,7 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         driver.get("https://advertising.coupang.com/marketing/campaigns")
@@ -838,8 +834,7 @@ def fetch_receiving_data(user_id: str, user_pw: str) -> Dict:
         options.add_experimental_option("useAutomationExtension", False)
         
         # ChromeDriver 자동 설치 및 실행
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         # supplier.coupang.com 접속
@@ -1023,8 +1018,7 @@ def fetch_settlement_data(user_id: str, user_pw: str) -> Dict:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         # supplier.coupang.com 접속
@@ -1180,8 +1174,7 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
+        driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         # supplier.coupang.com 접속
