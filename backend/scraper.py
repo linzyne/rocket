@@ -1163,8 +1163,13 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
         Dict: 성공 시 공제금액 데이터 리스트, 실패 시 에러 메시지
     """
     driver = None
+    logs = []  # 디버그 로그 수집
+    def log(msg):
+        print(msg)
+        logs.append(msg)
+
     try:
-        print("🚀 [공제금액 1단계] 브라우저 실행 중...")
+        log("🚀 [1단계] 브라우저 실행 중...")
         options = Options()
         if HEADLESS_MODE:
             options.add_argument("--headless=new")
@@ -1173,37 +1178,40 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
-        
+
         driver = webdriver.Chrome(options=options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
         time.sleep(5)
+        log(f"📌 접속 후 URL: {driver.current_url}")
 
         # 1. 로그인 단계
-        print("🔐 [공제금액 2단계] 로그인 시도 중...")
+        log("🔐 [2단계] 로그인 시도 중...")
         try:
             id_input = driver.find_elements(By.XPATH, "//input[@type='text' or @name='username' or @id='username']")
             pw_input = driver.find_elements(By.XPATH, "//input[@type='password']")
-            
+
             if id_input and pw_input:
                 id_input[0].clear()
                 id_input[0].send_keys(user_id)
                 pw_input[0].clear()
                 pw_input[0].send_keys(user_pw)
                 pw_input[0].send_keys(Keys.ENTER)
-                print("✅ 로그인 정보 입력 완료!")
+                log("✅ 로그인 정보 입력 완료!")
             else:
                 all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                log(f"⚠️ 기본 로그인 폼 못 찾음. input 개수: {len(all_inputs)}")
                 if len(all_inputs) >= 2:
                     all_inputs[0].send_keys(user_id)
                     all_inputs[1].send_keys(user_pw)
                     all_inputs[1].send_keys(Keys.ENTER)
         except Exception as e:
-            print(f"⚠️ 로그인 입력 중 오류: {e}")
-        
+            log(f"⚠️ 로그인 입력 중 오류: {e}")
+
         time.sleep(7)
+        log(f"📌 로그인 후 URL: {driver.current_url}")
 
         # 2. 공제금액계정 페이지로 직접 이동 (메뉴 클릭 대신 URL 직접 접근)
         print("💰 [공제금액 3단계] 공제금액계정 페이지로 직접 이동...")
@@ -1395,20 +1403,22 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
             
             time.sleep(1)
 
-        print(f"\n📊 공제금액 조회 완료! 총 {len(all_deduction_data)}개 항목 수집")
-        
+        log(f"\n📊 공제금액 조회 완료! 총 {len(all_deduction_data)}개 항목 수집")
+
         return {
             "success": True,
             "data": all_deduction_data,
             "count": len(all_deduction_data),
-            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+            "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "message": " | ".join(logs)
         }
 
     except Exception as e:
-        print(f"❌ 공제금액 조회 에러: {e}")
+        log(f"❌ 공제금액 조회 에러: {e}")
         return {
             "success": False,
-            "error": str(e)
+            "error": str(e),
+            "message": " | ".join(logs)
         }
     finally:
         if driver:
