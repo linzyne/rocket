@@ -13,6 +13,24 @@ const STORAGE_KEY = 'coupang_stock_history';
 const RECEIVING_STORAGE_KEY = 'coupang_receiving_history';
 const AD_STORAGE_KEY = 'coupang_ad_history';
 const MAPPING_STORAGE_KEY = 'coupang_product_mapping';
+const DEDUCTION_STORAGE_KEY = 'coupang_deduction_data';
+
+// 로그인 자격증명 가져오기 (localStorage → 로그인 폼 fallback)
+function getCredentials() {
+    let userId = localStorage.getItem('coupang_user_id');
+    let userPw = localStorage.getItem('coupang_user_pw');
+    if (!userId || !userPw) {
+        const idInput = document.getElementById('userId');
+        const pwInput = document.getElementById('userPw');
+        if (idInput && idInput.value.trim()) userId = idInput.value.trim();
+        if (pwInput && pwInput.value) userPw = pwInput.value;
+        if (userId && userPw) {
+            localStorage.setItem('coupang_user_id', userId);
+            localStorage.setItem('coupang_user_pw', userPw);
+        }
+    }
+    return { userId, userPw };
+}
 
 // ========================================
 // DOM 요소
@@ -832,8 +850,7 @@ async function fetchReceivingDataOnly(userId, userPw) {
 // 입고 수집 버튼 이벤트 리스너
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchReceivingBtn' || e.target.closest('#fetchReceivingBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
             showToast('먼저 재고 탭에서 로그인해주세요.', 'error');
@@ -1888,8 +1905,7 @@ function updateRocketSummary() {
 // 정산 조회 버튼
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchSettlementBtn' || e.target.closest('#fetchSettlementBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
             showToast('먼저 재고 탭에서 로그인해주세요.', 'error');
@@ -1919,8 +1935,7 @@ document.addEventListener('click', async (e) => {
 // ── 일회용: 전체 수집 (2025.4~) 버튼 - 나중에 이 블록만 삭제하면 됨 ──
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchFullDeductionBtn' || e.target.closest('#fetchFullDeductionBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
         if (!userId || !userPw) {
             showToast('먼저 재고 탭에서 로그인해주세요.', 'error');
             return;
@@ -2352,7 +2367,6 @@ function updateDashStats(totalSales, adSales, organicSales, adCost) {
 // ========================================
 // 정산내역 탭 기능
 // ========================================
-const DEDUCTION_STORAGE_KEY = 'coupang_deduction_data';
 let deductionData = [];  // 정산내역 데이터 배열
 let deductionHeaders = [];  // 테이블 헤더
 
@@ -2373,6 +2387,10 @@ function loadDeductionData() {
             const parsed = JSON.parse(saved);
             deductionData = parsed.data || [];
             deductionHeaders = parsed.headers || [];
+            // 헤더가 없으면 데이터에서 자동 추출
+            if (deductionHeaders.length === 0 && deductionData.length > 0) {
+                deductionHeaders = Object.keys(deductionData[0]).filter(k => !k.startsWith('_'));
+            }
         }
     } catch (e) {
         console.error('정산내역 데이터 로드 실패:', e);
@@ -2619,8 +2637,7 @@ async function fetchDeductionDataWithBuffer(userId, userPw) {
 // 재고 수집 버튼 (재고 + 입고만)
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchStockBtn' || e.target.closest('#fetchStockBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
             showToast('먼저 로그인해주세요.', 'error');
@@ -2635,8 +2652,7 @@ document.addEventListener('click', async (e) => {
 // 전체 데이터 수집 버튼 (재고 + 입고 + 정산내역)
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchAllDataBtn' || e.target.closest('#fetchAllDataBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
             showToast('먼저 로그인해주세요.', 'error');
@@ -2651,8 +2667,7 @@ document.addEventListener('click', async (e) => {
 // 정산내역 조회 버튼
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchDeductionBtn' || e.target.closest('#fetchDeductionBtn')) {
-        const userId = localStorage.getItem('coupang_user_id');
-        const userPw = localStorage.getItem('coupang_user_pw');
+        const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
             showToast('먼저 재고 탭에서 로그인해주세요.', 'error');
@@ -2983,8 +2998,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const fetchAdBtn = document.getElementById('fetchAdBtn');
     if (fetchAdBtn) {
         fetchAdBtn.addEventListener('click', async () => {
-            const userId = localStorage.getItem('coupang_user_id');
-            const userPw = localStorage.getItem('coupang_user_pw');
+            const { userId, userPw } = getCredentials();
 
             if (!userId || !userPw) {
                 showToast('로그인이 필요합니다.', 'error');

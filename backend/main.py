@@ -37,12 +37,11 @@ async def shutdown_event():
 # 프로세스 종료 시에도 스케줄러 중지
 atexit.register(stop_scheduler)
 
-# CORS 설정
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+# CORS 설정 (file:// 프로토콜 지원을 위해 credentials=False + origins=*)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
