@@ -5,6 +5,9 @@ Selenium을 사용하여 쿠팡 광고 대시보드에서 재고 데이터를 �
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import undetected_chromedriver as uc
 import os
 import time
 import re
@@ -14,6 +17,55 @@ from typing import List, Dict, Optional, Union
 
 # 환경변수 기반 headless 모드 (배포 환경에서는 항상 headless)
 HEADLESS_MODE = os.getenv("HEADLESS_MODE", "true").lower() == "true"
+
+
+def do_login(driver, user_id, user_pw, label=""):
+    """
+    공통 로그인 함수: JS로 값 설정 + 이벤트 디스패치 (봇 감지 우회)
+    """
+    try:
+        pw_field = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
+        )
+        id_field = driver.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
+
+        # JS로 값 설정 + React/Vue 이벤트 트리거
+        driver.execute_script("""
+            var idField = arguments[0];
+            var pwField = arguments[1];
+            var userId = arguments[2];
+            var userPw = arguments[3];
+
+            // 네이티브 setter로 값 설정 (React 호환)
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+
+            nativeInputValueSetter.call(idField, userId);
+            idField.dispatchEvent(new Event('input', { bubbles: true }));
+            idField.dispatchEvent(new Event('change', { bubbles: true }));
+
+            nativeInputValueSetter.call(pwField, userPw);
+            pwField.dispatchEvent(new Event('input', { bubbles: true }));
+            pwField.dispatchEvent(new Event('change', { bubbles: true }));
+        """, id_field, pw_field, user_id, user_pw)
+
+        time.sleep(0.5)
+
+        # 로그인 버튼 클릭
+        login_btn = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
+        if not login_btn:
+            login_btn = driver.find_elements(By.XPATH, "//*[contains(text(),'로그인') and (self::button or self::a or self::input)]")
+        if login_btn:
+            login_btn[0].click()
+        else:
+            pw_field.send_keys(Keys.ENTER)
+
+        print(f"✅ {label} 로그인 정보 입력 완료!")
+        time.sleep(5)
+        return True
+    except Exception as e:
+        print(f"⚠️ {label} 로그인 실패: {e}")
+        return False
 
 
 def extract_stock_from_page(driver) -> List[Dict]:
@@ -117,18 +169,13 @@ def fetch_stock_data(user_id: str, user_pw: str, debug_mode: bool = True, includ
     driver = None
     try:
         print("🚀 [1단계] 브라우저 실행 중...")
-        options = Options()
+        uc_options = uc.ChromeOptions()
         if HEADLESS_MODE and not debug_mode:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+            uc_options.add_argument("--headless=new")
+        uc_options.add_argument("--no-sandbox")
+        uc_options.add_argument("--disable-dev-shm-usage")
 
-        # ChromeDriver 자동 설치 및 실행
-        driver = webdriver.Chrome(options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        driver = uc.Chrome(options=uc_options)
 
         driver.get("https://advertising.coupang.com/marketing/product-dashboard")
         time.sleep(7)
@@ -138,14 +185,8 @@ def fetch_stock_data(user_id: str, user_pw: str, debug_mode: bool = True, includ
         all_login_btns = driver.find_elements(By.XPATH, "//*[text()='로그인하기']")
         if len(all_login_btns) >= 2:
             driver.execute_script("arguments[0].click();", all_login_btns[1])
-        
-        time.sleep(5)
-        all_inputs = driver.find_elements(By.TAG_NAME, "input")
-        if len(all_inputs) >= 2:
-            all_inputs[0].send_keys(user_id)
-            all_inputs[1].send_keys(user_pw)
-            all_inputs[1].send_keys(Keys.ENTER)
-            print("✅ 로그인 완료!")
+
+        do_login(driver, user_id, user_pw, label="[재고]")
 
         all_stock_data = []
 
@@ -741,18 +782,14 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
     driver = None
     try:
         print("🚀 [광고수집 1단계] 브라우저 실행 중...")
-        options = Options()
+        uc_options = uc.ChromeOptions()
         if HEADLESS_MODE and not debug_mode:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        
-        driver = webdriver.Chrome(options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+            uc_options.add_argument("--headless=new")
+        uc_options.add_argument("--no-sandbox")
+        uc_options.add_argument("--disable-dev-shm-usage")
+
+        driver = uc.Chrome(options=uc_options)
+
         driver.get("https://advertising.coupang.com/marketing/campaigns")
         time.sleep(7)
 
@@ -761,14 +798,9 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
         all_login_btns = driver.find_elements(By.XPATH, "//*[text()='로그인하기']")
         if len(all_login_btns) >= 2:
             driver.execute_script("arguments[0].click();", all_login_btns[1])
-        
-        time.sleep(5)
-        all_inputs = driver.find_elements(By.TAG_NAME, "input")
-        if len(all_inputs) >= 2:
-            all_inputs[0].send_keys(user_id)
-            all_inputs[1].send_keys(user_pw)
-            all_inputs[1].send_keys(Keys.ENTER)
-            print("✅ 로그인 입력 완료!")
+
+        try:
+            do_login(driver, user_id, user_pw, label="[광고]")
             
             # 로그인 후 세션 생성 대기 (너무 빠르면 404 발생 가능)
             time.sleep(6)
@@ -780,6 +812,8 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
                 print(f"⚡️ [광고수집] 현재 페이지({current_url}) -> 광고 대시보드로 이동: {target_url}")
                 driver.get(target_url)
                 time.sleep(5)
+        except Exception as login_err:
+            print(f"⚠️ 로그인 폼 찾기 실패: {login_err}")
 
         # 2. 광고 리포트 수집
         print("\n📈 [광고수집 3단계] 광고 리포트 데이터 추출...")
@@ -824,47 +858,21 @@ def fetch_receiving_data(user_id: str, user_pw: str) -> Dict:
     driver = None
     try:
         print("🚀 [입고조회 1단계] 브라우저 실행 중...")
-        options = Options()
+        uc_options = uc.ChromeOptions()
         if HEADLESS_MODE:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        
-        # ChromeDriver 자동 설치 및 실행
-        driver = webdriver.Chrome(options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+            uc_options.add_argument("--headless=new")
+        uc_options.add_argument("--no-sandbox")
+        uc_options.add_argument("--disable-dev-shm-usage")
+
+        driver = uc.Chrome(options=uc_options)
+
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
         time.sleep(5)
 
         # 1. 로그인 단계
         print("🔐 [입고조회 2단계] 로그인 시도 중...")
-        try:
-            # 로그인 폼 찾기
-            id_input = driver.find_elements(By.XPATH, "//input[@type='text' or @name='username' or @id='username']")
-            pw_input = driver.find_elements(By.XPATH, "//input[@type='password']")
-            
-            if id_input and pw_input:
-                id_input[0].clear()
-                id_input[0].send_keys(user_id)
-                pw_input[0].clear()
-                pw_input[0].send_keys(user_pw)
-                pw_input[0].send_keys(Keys.ENTER)
-                print("✅ 로그인 정보 입력 완료!")
-            else:
-                # 다른 패턴 시도
-                all_inputs = driver.find_elements(By.TAG_NAME, "input")
-                if len(all_inputs) >= 2:
-                    all_inputs[0].send_keys(user_id)
-                    all_inputs[1].send_keys(user_pw)
-                    all_inputs[1].send_keys(Keys.ENTER)
-                    print("✅ 로그인 정보 입력 완료! (대체 방법)")
-        except Exception as e:
-            print(f"⚠️ 로그인 입력 중 오류: {e}")
+        do_login(driver, user_id, user_pw, label="[입고]")
         
         time.sleep(7)
 
@@ -1009,43 +1017,21 @@ def fetch_settlement_data(user_id: str, user_pw: str) -> Dict:
     driver = None
     try:
         print("🚀 [정산조회 1단계] 브라우저 실행 중...")
-        options = Options()
+        uc_options = uc.ChromeOptions()
         if HEADLESS_MODE:
-            options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        
-        driver = webdriver.Chrome(options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+            uc_options.add_argument("--headless=new")
+        uc_options.add_argument("--no-sandbox")
+        uc_options.add_argument("--disable-dev-shm-usage")
+
+        driver = uc.Chrome(options=uc_options)
+
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
         time.sleep(5)
 
         # 1. 로그인 단계
         print("🔐 [정산조회 2단계] 로그인 시도 중...")
-        try:
-            id_input = driver.find_elements(By.XPATH, "//input[@type='text' or @name='username' or @id='username']")
-            pw_input = driver.find_elements(By.XPATH, "//input[@type='password']")
-            
-            if id_input and pw_input:
-                id_input[0].clear()
-                id_input[0].send_keys(user_id)
-                pw_input[0].clear()
-                pw_input[0].send_keys(user_pw)
-                pw_input[0].send_keys(Keys.ENTER)
-                print("✅ 로그인 정보 입력 완료!")
-            else:
-                all_inputs = driver.find_elements(By.TAG_NAME, "input")
-                if len(all_inputs) >= 2:
-                    all_inputs[0].send_keys(user_id)
-                    all_inputs[1].send_keys(user_pw)
-                    all_inputs[1].send_keys(Keys.ENTER)
-        except Exception as e:
-            print(f"⚠️ 로그인 입력 중 오류: {e}")
+        do_login(driver, user_id, user_pw, label="[정산]")
         
         time.sleep(7)
 
@@ -1170,46 +1156,21 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
 
     try:
         log("🚀 [1단계] 브라우저 실행 중...")
-        options = Options()
-        # headless 사용 안 함 (쿠팡 봇 감지 우회 - 재고/입고와 동일)
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+        uc_options = uc.ChromeOptions()
+        # headless 사용 안 함 (쿠팡 봇 감지 우회)
+        uc_options.add_argument("--no-sandbox")
+        uc_options.add_argument("--disable-dev-shm-usage")
 
-        driver = webdriver.Chrome(options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        driver = uc.Chrome(options=uc_options)
 
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
         time.sleep(3)
         log(f"📌 접속 후 URL: {driver.current_url}")
 
-        # 1. 로그인 단계 - 로그인 폼이 렌더링될 때까지 명시적 대기
-        log("🔐 [2단계] 로그인 폼 대기 중 (최대 20초)...")
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        try:
-            pw_input = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.XPATH, "//input[@type='password']"))
-            )
-            id_input = driver.find_elements(By.XPATH, "//input[@type='text' or @name='username' or @id='username']")
-            if not id_input:
-                id_input = [el for el in driver.find_elements(By.TAG_NAME, "input") if el.get_attribute('type') != 'password']
-
-            if id_input:
-                id_input[0].clear()
-                id_input[0].send_keys(user_id)
-                pw_input.clear()
-                pw_input.send_keys(user_pw)
-                pw_input.send_keys(Keys.ENTER)
-                log("✅ 로그인 정보 입력 완료!")
-            else:
-                log("⚠️ ID 입력필드를 찾을 수 없음")
-        except Exception as e:
-            log(f"⚠️ 로그인 폼 대기 실패: {e}")
-            log(f"📌 페이지 제목: {driver.title}")
+        # 1. 로그인 단계
+        log("🔐 [2단계] 로그인 시도 중...")
+        do_login(driver, user_id, user_pw, label="[정산-버퍼]")
 
         time.sleep(7)
         log(f"📌 로그인 후 URL: {driver.current_url}")

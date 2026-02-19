@@ -495,6 +495,7 @@ function getAllRocketSKUs() {
  */
 function getAllProducts() {
     const productMap = new Map();
+    const dates = getCurrentMonthDates();
 
     Object.values(stockHistory).forEach(dayData => {
         dayData.forEach(item => {
@@ -505,9 +506,34 @@ function getAllProducts() {
         });
     });
 
-    // 광고중 상품 우선 정렬
+    // 현재 월 판매량 계산
+    const salesMap = {};
+    productMap.forEach((_, productName) => {
+        let prevStock = null;
+        let totalSales = 0;
+        dates.forEach(date => {
+            const dayData = stockHistory[date];
+            if (!dayData) return;
+            const item = dayData.find(d => d.product_name === productName);
+            if (!item) return;
+            if (prevStock !== null) {
+                const receiving = typeof getMappedReceiving === 'function' ? getMappedReceiving(productName, date) : 0;
+                const sales = prevStock + receiving - item.stock;
+                if (sales > 0) totalSales += sales;
+            }
+            prevStock = item.stock;
+        });
+        salesMap[productName] = totalSales;
+    });
+
+    // 정렬: 판매량 있는 상품 상단 → 광고중 → 이름순
     const products = Array.from(productMap.entries());
     products.sort((a, b) => {
+        const aSales = salesMap[a[0]] || 0;
+        const bSales = salesMap[b[0]] || 0;
+        if (aSales > 0 && bSales === 0) return -1;
+        if (aSales === 0 && bSales > 0) return 1;
+        if (aSales !== bSales) return bSales - aSales;
         const aIsAd = a[1] === '광고중';
         const bIsAd = b[1] === '광고중';
         if (aIsAd && !bIsAd) return -1;
@@ -1313,6 +1339,9 @@ document.addEventListener('click', (e) => {
             loadCachedDeductionAndRender();
         } else if (tabName === 'ad') {
             if (typeof renderAdTab === 'function') setTimeout(renderAdTab, 0);
+        } else if (tabName === 'stock') {
+            if (typeof renderPivotTable === 'function') renderPivotTable();
+            if (typeof updateStats === 'function') updateStats();
         } else if (tabName === 'deduction') {
             if (typeof renderDeductionTable === 'function') renderDeductionTable();
             if (typeof updateDeductionStats === 'function') updateDeductionStats();
@@ -2213,13 +2242,19 @@ function renderDashboard() {
     // 1) 상품별 데이터 집계
     const productMap = {};
 
+    // 상품명 정규화 (공백/특수문자 차이로 인한 중복 방지)
+    function normalizeProductName(name) {
+        return name.replace(/\s+/g, ' ').trim();
+    }
+
     // 모든 상품 수집 (범위 내 날짜에서만)
     rangeDates.forEach(date => {
         const dayData = stockHistory[date];
         if (!dayData) return;
         dayData.forEach(item => {
-            if (!productMap[item.product_name]) {
-                productMap[item.product_name] = {
+            const normName = normalizeProductName(item.product_name);
+            if (!productMap[normName]) {
+                productMap[normName] = {
                     totalSales: 0,
                     adSales: 0,
                     adCost: 0,
@@ -2230,6 +2265,10 @@ function renderDashboard() {
                     latestDate: '',
                     adStatus: item.ad_status || '광고안함'
                 };
+            }
+            // 광고 상태 업데이트 (하나라도 광고중이면 광고중으로)
+            if (item.ad_status === '광고중') {
+                productMap[normName].adStatus = '광고중';
             }
         });
     });
@@ -2242,14 +2281,15 @@ function renderDashboard() {
             const dayData = stockHistory[date];
             if (!dayData) return;
 
-            const item = dayData.find(d => d.product_name === productName);
+            // 정규화된 이름으로 매칭
+            const item = dayData.find(d => normalizeProductName(d.product_name) === productName);
             if (!item) return;
 
             const stock = item.stock;
 
             // rangeDates에 포함된 날짜만 판매량 계산 (전날 데이터는 prevStock 설정용)
             if (prevStock !== null && date >= startDate) {
-                const receiving = getMappedReceiving(productName, date);
+                const receiving = getMappedReceiving(item.product_name, date);
                 const sales = prevStock + receiving - stock;
                 if (sales > 0) {
                     productMap[productName].totalSales += sales;
@@ -2280,6 +2320,7 @@ function renderDashboard() {
             if (productMapping[name]) {
                 name = productMapping[name];
             }
+            name = normalizeProductName(name);
 
             if (!productMap[name]) {
                 productMap[name] = {
@@ -2306,13 +2347,12 @@ function renderDashboard() {
         });
     });
 
-    // 4) 정렬: 판매량(총/광고) 있는 상품 위로, 그 안에서 총 판매량 내림차순
+    // 4) 정렬: 어떤 데이터든 있으면 상단, 그 안에서 총 판매량 내림차순
     const sortedProducts = Object.entries(productMap).sort((a, b) => {
-        const aActive = a[1].totalSales > 0 || a[1].adSales > 0;
-        const bActive = b[1].totalSales > 0 || b[1].adSales > 0;
-        if (aActive && !bActive) return -1;
-        if (!aActive && bActive) return 1;
-        // 같은 그룹 내에서 총 판매량 내림차순, 동일하면 광고 판매량 내림차순
+        const aHasData = a[1].totalSales > 0 || a[1].adSales > 0 || a[1].adCost > 0 || a[1].latestStock > 0;
+        const bHasData = b[1].totalSales > 0 || b[1].adSales > 0 || b[1].adCost > 0 || b[1].latestStock > 0;
+        if (aHasData && !bHasData) return -1;
+        if (!aHasData && bHasData) return 1;
         if (b[1].totalSales !== a[1].totalSales) return b[1].totalSales - a[1].totalSales;
         return b[1].adSales - a[1].adSales;
     });
