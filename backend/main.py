@@ -465,50 +465,43 @@ async def fetch_supplier_all(request: SupplierRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _run_ad_collection(user_id: str, user_pw: str, days_back: int):
+    """광고 데이터를 백그라운드에서 수집하고 Supabase에 저장"""
+    try:
+        print(f"🔄 [백그라운드] 광고 수집 시작 ({days_back}일치)...")
+        result = fetch_ad_report_only(user_id, user_pw, days_back, True)
+
+        if result and result["success"] and result.get("data_by_date"):
+            from db import save_data, load_data
+            existing = load_data("ad_history") or {}
+            for date_str, ad_data in result["data_by_date"].items():
+                old = existing.get(date_str)
+                if old and old.get("products") and not ad_data.get("products"):
+                    ad_data["products"] = old["products"]
+                existing[date_str] = ad_data
+            save_data("ad_history", existing)
+            print(f"✅ [백그라운드] Supabase에 광고 데이터 저장 완료 ({len(result['data_by_date'])}일치)")
+        else:
+            print(f"⚠️ [백그라운드] 광고 수집 실패: {result.get('error') if result else '결과 없음'}")
+    except Exception as e:
+        print(f"❌ [백그라운드] 광고 수집 에러: {e}")
+
+
 @app.post("/api/fetch-ad-report")
 async def fetch_ad(request: SupplierRequest):
     """
-    쿠팡 광고 리포트 데이터를 별도로 조회합니다.
-    days_back일치 데이터를 수집합니다 (기본: 7일).
+    쿠팡 광고 리포트 데이터를 백그라운드로 수집합니다.
+    즉시 응답 후 Supabase에 저장 → /api/cached-ad로 조회.
     """
     try:
         days_back = request.days_back or 7
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            executor,
-            fetch_ad_report_only,
-            request.user_id,
-            request.user_pw,
-            days_back,
-            True  # debug_mode
-        )
-
-        if result and result["success"]:
-            # Supabase에 광고 데이터 저장 (날짜별 대체)
-            if result.get("data_by_date"):
-                try:
-                    from db import save_data, load_data
-                    existing = load_data("ad_history") or {}
-                    for date_str, ad_data in result["data_by_date"].items():
-                        # 기존에 products(상세)가 있고 새 데이터에 없으면 유지
-                        old = existing.get(date_str)
-                        if old and old.get("products") and not ad_data.get("products"):
-                            ad_data["products"] = old["products"]
-                        existing[date_str] = ad_data
-                    save_data("ad_history", existing)
-                    print(f"✅ Supabase에 광고 데이터 저장 완료 ({len(result['data_by_date'])}일치)")
-                except Exception as db_err:
-                    print(f"⚠️ Supabase 광고 저장 실패: {db_err}")
-            return {
-                "success": True,
-                "data_by_date": result.get("data_by_date", {}),
-                "timestamp": result["timestamp"]
-            }
-        else:
-            return {
-                "success": False,
-                "error": result.get("error", "알 수 없는 오류가 발생했습니다.") if result else "데이터 수집 실패"
-            }
+        # 백그라운드에서 수집 시작 (프론트엔드 타임아웃 방지)
+        executor.submit(_run_ad_collection, request.user_id, request.user_pw, days_back)
+        return {
+            "success": True,
+            "background": True,
+            "message": f"광고 데이터 수집이 백그라운드로 시작되었습니다 ({days_back}일치). 완료 후 자동 저장됩니다."
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

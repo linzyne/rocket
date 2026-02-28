@@ -1019,8 +1019,8 @@ async function fetchAllData(userId, userPw) {
             }
         } catch (e) { errors.push('재고'); console.error('재고 수집 오류:', e); }
 
-        // [2/3] 광고비 데이터 조회
-        elements.loadingStatus.textContent = '📊 [2/3] 광고비 데이터 조회 중...';
+        // [2/3] 광고비 데이터 조회 (백그라운드 수집)
+        elements.loadingStatus.textContent = '📊 [2/3] 광고비 수집 요청 중...';
         try {
             const adResponse = await fetch(`${API_BASE_URL}/api/fetch-ad-report`, {
                 method: 'POST',
@@ -1028,16 +1028,21 @@ async function fetchAllData(userId, userPw) {
                 body: JSON.stringify({ user_id: userId, user_pw: userPw, days_back: 7 })
             });
             const adResult = await adResponse.json();
-            if (adResult.success && adResult.data_by_date) {
-                for (const [dateStr, dayData] of Object.entries(adResult.data_by_date)) {
-                    // 기존에 products(상세)가 있고 새 데이터에 없으면 유지
-                    const existing = adHistory[dateStr];
-                    if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
-                        dayData.products = existing.products;
+            if (adResult.success) {
+                if (adResult.background) {
+                    // 백그라운드 수집 시작됨 → 나중에 캐시에서 로드
+                    console.log('📊 광고비 백그라운드 수집 시작됨');
+                    adOk = true;
+                } else if (adResult.data_by_date) {
+                    for (const [dateStr, dayData] of Object.entries(adResult.data_by_date)) {
+                        const existing = adHistory[dateStr];
+                        if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
+                            dayData.products = existing.products;
+                        }
+                        adHistory[dateStr] = dayData;
                     }
-                    adHistory[dateStr] = dayData;
+                    adOk = true;
                 }
-                adOk = true;
             } else {
                 errors.push('광고');
             }
@@ -3434,7 +3439,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // 광고비 데이터만 독립적으로 수집
 async function fetchAdDataOnly(userId, userPw) {
     showLoading('광고 데이터를 불러오는 중...');
-    elements.loadingStatus.textContent = '📢 광고 리포트 데이터 수집 중...';
+    elements.loadingStatus.textContent = '📢 광고 리포트 수집 요청 중...';
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/fetch-ad-report`, {
@@ -3445,42 +3450,80 @@ async function fetchAdDataOnly(userId, userPw) {
 
         if (response.ok) {
             const result = await response.json();
-            if (result.success && result.data_by_date) {
-                const dates = Object.keys(result.data_by_date);
-                for (const [dateStr, dayData] of Object.entries(result.data_by_date)) {
-                    // 기존에 products(상세)가 있고 새 데이터에 없으면 유지
-                    const existing = adHistory[dateStr];
-                    if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
-                        dayData.products = existing.products;
+            if (result.success) {
+                if (result.background) {
+                    // 백그라운드 수집 → 완료까지 폴링
+                    showToast('📊 광고비 수집이 시작되었습니다. 3~5분 후 자동으로 불러옵니다.', 'info');
+                    elements.loadingStatus.textContent = '📊 백그라운드 수집 중... (3~5분 소요)';
+
+                    // 30초마다 캐시 확인 (최대 6분)
+                    let attempts = 0;
+                    const pollInterval = setInterval(async () => {
+                        attempts++;
+                        try {
+                            const cacheRes = await fetch(`${API_BASE_URL}/api/cached-ad`);
+                            const cacheData = await cacheRes.json();
+                            if (cacheData.success && cacheData.data) {
+                                const today = new Date().toISOString().split('T')[0];
+                                const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                                // 어제 데이터가 새로 들어왔는지 확인
+                                if (cacheData.data[yesterday] || cacheData.data[today]) {
+                                    clearInterval(pollInterval);
+                                    Object.entries(cacheData.data).forEach(([dateStr, dayData]) => {
+                                        adHistory[dateStr] = dayData;
+                                    });
+                                    saveHistory();
+                                    const adYesterday = new Date();
+                                    adYesterday.setDate(adYesterday.getDate() - 1);
+                                    currentAdDate = adYesterday;
+                                    renderAdTab();
+                                    showResult();
+                                    renderPivotTable();
+                                    updateStats();
+                                    showToast(`✅ 광고비 데이터 수집 완료!`, 'success');
+                                    return;
+                                }
+                            }
+                        } catch (e) { /* 폴링 실패 무시 */ }
+
+                        if (attempts >= 12) { // 6분 초과
+                            clearInterval(pollInterval);
+                            showResult();
+                            showToast('⏰ 광고비 수집 시간 초과. "새로 조회"로 확인해주세요.', 'warning');
+                        } else {
+                            elements.loadingStatus.textContent = `📊 백그라운드 수집 중... (${attempts * 30}초 경과)`;
+                        }
+                    }, 30000);
+                } else if (result.data_by_date) {
+                    for (const [dateStr, dayData] of Object.entries(result.data_by_date)) {
+                        const existing = adHistory[dateStr];
+                        if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
+                            dayData.products = existing.products;
+                        }
+                        adHistory[dateStr] = dayData;
                     }
-                    adHistory[dateStr] = dayData;
+                    saveHistory();
+                    const yesterday = new Date();
+                    yesterday.setDate(yesterday.getDate() - 1);
+                    currentAdDate = yesterday;
+                    renderAdTab();
+                    showToast(`✅ 광고비 데이터 수집 완료!`, 'success');
+                    showResult();
+                    renderPivotTable();
+                    updateStats();
                 }
-                saveHistory();
-
-                // 현재 탭이 광고탭이면 업데이트
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() - 1);
-                currentAdDate = yesterday;
-                renderAdTab();
-
-                showToast(`✅ 광고비 데이터 수집 완료! (${dates.length}일치)`, 'success');
             } else {
                 showError(result.error || '광고 데이터 수집 실패');
+                showResult();
             }
         } else {
             showError('서버 연결 실패');
+            showResult();
         }
     } catch (e) {
         console.error('광고 수집 오류:', e);
         showError('광고 수집 중 오류가 발생했습니다.');
-    } finally {
         showResult();
-        // 피벗 테이블이 보이는 상태면 다시 렌더링 (입고 데이터 유지)
-        const activeTab = document.querySelector('.tab-content.active');
-        if (activeTab && activeTab.id === 'stockTab') {
-            renderPivotTable();
-            updateStats();
-        }
     }
 }
 
