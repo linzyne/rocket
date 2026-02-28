@@ -699,28 +699,6 @@ function renderPivotTable() {
                             receiving = Number(_dr[mappedSku]) || 0;
                         }
                     }
-                    // 3) 단어 겹침 매칭: 상품명 단어의 60% 이상이 SKU명에 포함되면 매칭
-                    if (receiving === 0) {
-                        const productWords = productName.split(/[\s,.:]+/).filter(w => w.length >= 2);
-                        if (productWords.length >= 2) {
-                            let bestMatch = null, bestScore = 0;
-                            for (const [skuName, qty] of Object.entries(_dr)) {
-                                const matchCount = productWords.filter(w => skuName.includes(w)).length;
-                                const score = matchCount / productWords.length;
-                                if (score > bestScore && score >= 0.5) {
-                                    bestScore = score;
-                                    bestMatch = { skuName, qty };
-                                }
-                            }
-                            if (bestMatch) {
-                                receiving = Number(bestMatch.qty) || 0;
-                                if (!productMapping[productName]) {
-                                    productMapping[productName] = bestMatch.skuName;
-                                    saveHistory();
-                                }
-                            }
-                        }
-                    }
                 }
             } catch(e) {}
 
@@ -1481,7 +1459,7 @@ elements.nextMonthBtn.addEventListener('click', goToNextMonth);
 // 매핑 버튼 (동적으로 추가될 수 있음)
 document.addEventListener('click', (e) => {
     if (e.target.id === 'mappingBtn' || e.target.closest('#mappingBtn')) {
-        showMappingModal();
+        showMappingModal(true);
     }
 });
 
