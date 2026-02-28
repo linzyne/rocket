@@ -468,12 +468,27 @@ async def fetch_supplier_all(request: SupplierRequest):
 def _run_ad_collection(user_id: str, user_pw: str, days_back: int):
     """광고 데이터를 백그라운드에서 수집하고 Supabase에 저장"""
     try:
-        print(f"🔄 [백그라운드] 광고 수집 시작 ({days_back}일치)...")
-        result = fetch_ad_report_only(user_id, user_pw, days_back, True)
+        from db import save_data, load_data
+        from datetime import datetime, timedelta
+
+        existing = load_data("ad_history") or {}
+
+        # 이미 수집된 날짜는 건너뛰기 (어제 날짜는 항상 재수집)
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        skip_dates = set()
+        for i in range(days_back, 0, -1):
+            d = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            if d != yesterday_str and d in existing and existing[d].get("ad_cost") is not None:
+                skip_dates.add(d)
+
+        actual_days = days_back - len(skip_dates)
+        if skip_dates:
+            print(f"⏩ [백그라운드] 이미 수집된 날짜 {len(skip_dates)}개 건너뜀 → 실제 수집: {actual_days}일")
+
+        print(f"🔄 [백그라운드] 광고 수집 시작 ({actual_days}일치, 총 {days_back}일 중)...")
+        result = fetch_ad_report_only(user_id, user_pw, days_back, True, skip_dates=skip_dates)
 
         if result and result["success"] and result.get("data_by_date"):
-            from db import save_data, load_data
-            existing = load_data("ad_history") or {}
             for date_str, ad_data in result["data_by_date"].items():
                 old = existing.get(date_str)
                 if old and old.get("products") and not ad_data.get("products"):

@@ -432,32 +432,54 @@ def select_specific_date(driver, date_str):
 
     print(f"📅 [광고리포트] 날짜 '{date_str}' 선택 중...")
     try:
-        # 대시보드를 날짜 파라미터와 함께 로드
+        from selenium.webdriver.common.keys import Keys
+        import platform
+
+        # 방법 1: URL 파라미터로 날짜 지정하여 대시보드 로드
         target_url = f"https://advertising.coupang.com/marketing/dashboard/sales?dateType=CUSTOM&startDate={date_str}&endDate={date_str}"
         driver.get(target_url)
-        time.sleep(5)
+        time.sleep(4)
 
-        # URL 파라미터가 안 먹힐 수 있으므로 날짜 표시 확인
-        # 날짜가 제대로 적용되지 않은 경우 '사용자 정의' 클릭 후 직접 입력 시도
         page_text = driver.find_element(By.TAG_NAME, "body").text
-        if date_str not in page_text:
-            print(f"   ⚠️ URL 파라미터 방식 실패, 날짜 직접 입력 시도...")
-            # Ant Design 날짜 선택기의 입력 필드 찾기
-            from selenium.webdriver.common.keys import Keys
-            date_inputs = driver.find_elements(By.CSS_SELECTOR, ".ant-picker input, input[class*='date'], input[class*='Date']")
-            for inp in date_inputs:
-                if inp.is_displayed():
-                    inp.click()
-                    time.sleep(0.5)
-                    inp.send_keys(Keys.CONTROL + 'a')
-                    inp.send_keys(date_str)
+        if date_str in page_text:
+            print(f"   📌 날짜 '{date_str}' 적용 확인 (URL 파라미터)")
+            return True
+
+        print(f"   ⚠️ URL 파라미터 방식 실패, 날짜 직접 입력 시도...")
+
+        # 방법 2: JS로 날짜 입력 필드 값 변경
+        date_inputs = driver.find_elements(By.CSS_SELECTOR, ".ant-picker input, input[class*='date'], input[class*='Date']")
+        for inp in date_inputs:
+            if inp.is_displayed():
+                try:
+                    # JS로 값 설정 후 이벤트 트리거
+                    driver.execute_script("""
+                        var el = arguments[0];
+                        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(el, arguments[1]);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    """, inp, date_str)
+                    time.sleep(1)
                     inp.send_keys(Keys.ENTER)
                     time.sleep(3)
-                    print(f"   📌 날짜 입력 완료: {date_str}")
+                    print(f"   📌 날짜 입력 완료 (JS): {date_str}")
                     return True
-        else:
-            print(f"   📌 날짜 '{date_str}' 적용 확인")
-            return True
+                except:
+                    pass
+
+                # 방법 3: 전체선택 + 타이핑
+                inp.click()
+                time.sleep(0.5)
+                select_all = Keys.COMMAND + 'a' if platform.system() == 'Darwin' else Keys.CONTROL + 'a'
+                inp.send_keys(select_all)
+                inp.send_keys(date_str)
+                inp.send_keys(Keys.ENTER)
+                time.sleep(3)
+                print(f"   📌 날짜 입력 완료 (키입력): {date_str}")
+                return True
+
+        print(f"   ⚠️ 날짜 입력 필드를 찾을 수 없습니다.")
     except Exception as e:
         print(f"⚠️ 날짜 선택 실패 ({date_str}): {e}")
     return False
@@ -553,14 +575,17 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
         # 1. 사용자 지정 URL로 이동 ('광고표준' 대시보드)
         target_url = "https://advertising.coupang.com/marketing/dashboard/sales"
 
-        driver.get(target_url)
-        time.sleep(5)
+        # 최대 3회 대시보드 이동 시도
+        for nav_attempt in range(3):
+            driver.get(target_url)
+            time.sleep(3 + nav_attempt * 2)
+            if "marketing/dashboard" in driver.current_url or "dashboard/sales" in driver.current_url:
+                break
+            print(f"⚠️ 페이지 이동 실패 (시도 {nav_attempt+1}/3): {driver.current_url}")
 
-        # 최종 확인
-        if "marketing/dashboard" not in driver.current_url:
-             print("⚠️ 페이지 이동 실패: 여전히 다른 페이지에 있습니다. 강제 이동 재시도...")
-             driver.get(target_url)
-             time.sleep(7)
+        if "marketing/dashboard" not in driver.current_url and "dashboard/sales" not in driver.current_url:
+            print(f"❌ 대시보드 이동 불가 → 이 날짜({target_date}) 건너뜀")
+            return None
 
         # 2. 날짜 선택
         if target_date == 'yesterday':
@@ -631,6 +656,8 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
             print(f"💰 광고비 조정: {original_cost} -> {result['ad_cost']} (+10%)")
         else:
             print("⚠️ 광고비 데이터를 찾지 못했습니다.")
+            # 광고비를 못 찾으면 실패로 처리 (다음에 재수집하도록)
+            return None
 
         # 5. 캠페인별 상세 데이터 수집 (Nested Scraping)
         if not collect_campaign_details:
@@ -645,7 +672,7 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
             campaign_targets = [] # {'type': 'url', 'val': url} or {'type': 'click', 'index': i}
             
             # 테이블 데이터가 로드될 때까지 대기
-            time.sleep(3)
+            time.sleep(2)
             
             # ON 요소 탐색 (태그 종류 불문 - 실제 태그 확인용 디버깅 포함)
             all_on_elements = driver.find_elements(By.XPATH, "//*[text()='ON']")
@@ -757,12 +784,12 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
                     
                     if target['type'] == 'url':
                         driver.get(target['val'])
-                        time.sleep(5)
-                        
+                        time.sleep(3)
+
                         # URL 이동 후에도 제대로 로드되었는지 확인
                         if "campaignId" not in driver.current_url and "marketing/campaigns" not in driver.current_url:
                              print(f"      ⚠️ 경고: 예상치 못한 페이지로 이동함 ({driver.current_url})")
-                        
+
                         entered = True
                     else:
                         # 클릭 방식 (Stale Element 방지를 위해 다시 찾기)
@@ -770,15 +797,15 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
                             # 대시보드로 복귀 확인
                             if driver.current_url != current_dashboard_url:
                                 driver.get(current_dashboard_url)
-                                time.sleep(5)
-                            
+                                time.sleep(3)
+
                             # ON 요소 다시 찾기 (span.ant-switch-inner 등)
                             all_on = driver.find_elements(By.XPATH, "//*[text()='ON']")
                             visible_on = [e for e in all_on if e.is_displayed()]
-                            
+
                             if target['index'] < len(visible_on):
                                 target_el = visible_on[target['index']]
-                                
+
                                 # ON 요소에서 상위로 올라가며 같은 행의 링크(a) 찾기
                                 link = None
                                 parent = target_el
@@ -788,7 +815,7 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
                                     if links:
                                         link = links[0]
                                         break
-                                
+
                                 if link:
                                     url = link.get_attribute("href")
                                     if url and "http" in url:
@@ -797,7 +824,7 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
                                     else:
                                         print(f"      🖱 클릭 실행: {link.text[:30]}")
                                         driver.execute_script("arguments[0].click();", link)
-                                    time.sleep(5)
+                                    time.sleep(3)
                                     entered = True
                                 else:
                                     print("      ⚠️ ON 요소 주변에서 링크를 찾을 수 없음")
@@ -845,20 +872,24 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_ca
         traceback.print_exc()
         return None
 
-def fetch_ad_report_only(user_id: str, user_pw: str, days_back: int = 1, debug_mode: bool = True) -> Dict:
+def fetch_ad_report_only(user_id: str, user_pw: str, days_back: int = 1, debug_mode: bool = True, skip_dates: set = None) -> Dict:
     """
     광고 리포트 데이터만 독립적으로 수집합니다.
     days_back일치 데이터를 수집하며, 캠페인 상세는 어제분만 수집합니다.
+    skip_dates: 이미 수집된 날짜 set (건너뛰기)
     """
+    if skip_dates is None:
+        skip_dates = set()
+
     driver = None
     try:
         from datetime import datetime, timedelta
 
-        print(f"🚀 [광고수집 1단계] 브라우저 실행 중... ({days_back}일치 수집)")
+        print(f"🚀 [광고수집 1단계] 브라우저 실행 중... ({days_back}일치 수집, {len(skip_dates)}개 스킵)")
         driver = create_chrome_driver(headless=HEADLESS_MODE and not debug_mode)
 
         driver.get("https://advertising.coupang.com/marketing/campaigns")
-        time.sleep(7)
+        time.sleep(5)
 
         # 1. 로그인
         print("🔐 [광고수집 2단계] 로그인 시도 중...")
@@ -868,25 +899,34 @@ def fetch_ad_report_only(user_id: str, user_pw: str, days_back: int = 1, debug_m
 
         try:
             do_login(driver, user_id, user_pw, label="[광고]")
-            time.sleep(6)
+            time.sleep(4)
             current_url = driver.current_url
             if "product-dashboard" in current_url or "login" in current_url:
                 target_url = "https://advertising.coupang.com/marketing/dashboard/sales"
                 print(f"⚡️ [광고수집] 현재 페이지({current_url}) -> 광고 대시보드로 이동: {target_url}")
                 driver.get(target_url)
-                time.sleep(5)
+                time.sleep(4)
         except Exception as login_err:
             print(f"⚠️ 로그인 폼 찾기 실패: {login_err}")
 
         # 2. 광고 리포트 수집 (days_back일치)
-        print(f"\n📈 [광고수집 3단계] 광고 리포트 {days_back}일치 데이터 추출...")
         yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        actual_count = days_back - len(skip_dates)
+        print(f"\n📈 [광고수집 3단계] 광고 리포트 {actual_count}일치 데이터 추출...")
         data_by_date = {}
+        collected = 0
 
         for i in range(days_back, 0, -1):
             target_date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+
+            # 이미 수집된 날짜 건너뛰기
+            if target_date in skip_dates:
+                print(f"   ⏩ {target_date} 이미 수집됨 → 건너뜀")
+                continue
+
+            collected += 1
             is_yesterday = (target_date == yesterday_str)
-            print(f"\n📅 [{days_back - i + 1}/{days_back}] {target_date} 수집 중... (상세: {'O' if is_yesterday else 'X'})")
+            print(f"\n📅 [{collected}/{actual_count}] {target_date} 수집 중... (상세: {'O' if is_yesterday else 'X'})")
 
             ad_data = fetch_ad_report(
                 driver,
@@ -921,7 +961,7 @@ def fetch_ad_report_only(user_id: str, user_pw: str, days_back: int = 1, debug_m
         }
     finally:
         if driver:
-            time.sleep(2)
+            time.sleep(1)
             driver.quit()
             print("🔒 [광고수집] 브라우저 종료")
 

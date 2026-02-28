@@ -3453,10 +3453,10 @@ async function fetchAdDataOnly(userId, userPw) {
             if (result.success) {
                 if (result.background) {
                     // 백그라운드 수집 → 완료까지 폴링
-                    showToast('📊 광고비 수집이 시작되었습니다. 3~5분 후 자동으로 불러옵니다.', 'info');
-                    elements.loadingStatus.textContent = '📊 백그라운드 수집 중... (3~5분 소요)';
+                    showToast('📊 광고비 수집이 시작되었습니다. 1~2분 후 자동으로 불러옵니다.', 'info');
+                    elements.loadingStatus.textContent = '📊 백그라운드 수집 중... (1~2분 소요)';
 
-                    // 30초마다 캐시 확인 (최대 6분)
+                    // 15초마다 캐시 확인 (최대 4분)
                     let attempts = 0;
                     const pollInterval = setInterval(async () => {
                         attempts++;
@@ -3486,14 +3486,14 @@ async function fetchAdDataOnly(userId, userPw) {
                             }
                         } catch (e) { /* 폴링 실패 무시 */ }
 
-                        if (attempts >= 12) { // 6분 초과
+                        if (attempts >= 16) { // 4분 초과
                             clearInterval(pollInterval);
                             showResult();
                             showToast('⏰ 광고비 수집 시간 초과. "새로 조회"로 확인해주세요.', 'warning');
                         } else {
-                            elements.loadingStatus.textContent = `📊 백그라운드 수집 중... (${attempts * 30}초 경과)`;
+                            elements.loadingStatus.textContent = `📊 백그라운드 수집 중... (${attempts * 15}초 경과)`;
                         }
-                    }, 30000);
+                    }, 15000);
                 } else if (result.data_by_date) {
                     for (const [dateStr, dayData] of Object.entries(result.data_by_date)) {
                         const existing = adHistory[dateStr];
