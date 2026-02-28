@@ -699,20 +699,25 @@ function renderPivotTable() {
                             receiving = Number(_dr[mappedSku]) || 0;
                         }
                     }
-                    // 3) 부분 매칭: SKU명이 상품명을 포함하거나 그 반대
+                    // 3) 단어 겹침 매칭: 상품명 단어의 60% 이상이 SKU명에 포함되면 매칭
                     if (receiving === 0) {
-                        const normProduct = productName.replace(/\s+/g, '').toLowerCase();
-                        for (const [skuName, qty] of Object.entries(_dr)) {
-                            const normSku = skuName.replace(/\s+/g, '').toLowerCase();
-                            if (normProduct.length >= 5 && normSku.length >= 5 &&
-                                (normProduct.includes(normSku) || normSku.includes(normProduct))) {
-                                receiving = Number(qty) || 0;
-                                // 자동 매핑 저장 (다음부터 빠르게 매칭)
+                        const productWords = productName.split(/[\s,.:]+/).filter(w => w.length >= 2);
+                        if (productWords.length >= 2) {
+                            let bestMatch = null, bestScore = 0;
+                            for (const [skuName, qty] of Object.entries(_dr)) {
+                                const matchCount = productWords.filter(w => skuName.includes(w)).length;
+                                const score = matchCount / productWords.length;
+                                if (score > bestScore && score >= 0.5) {
+                                    bestScore = score;
+                                    bestMatch = { skuName, qty };
+                                }
+                            }
+                            if (bestMatch) {
+                                receiving = Number(bestMatch.qty) || 0;
                                 if (!productMapping[productName]) {
-                                    productMapping[productName] = skuName;
+                                    productMapping[productName] = bestMatch.skuName;
                                     saveHistory();
                                 }
-                                break;
                             }
                         }
                     }
