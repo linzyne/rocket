@@ -992,69 +992,86 @@ def fetch_receiving_data(user_id: str, user_pw: str, days_back: int = 1) -> Dict
         from datetime import datetime, timedelta
         start_dt = datetime.now() - timedelta(days=days_back)
         today_dt = datetime.now()
-        print(f"📅 [입고조회 4단계] 날짜 범위 설정 ({days_back}일 전 ~ 오늘)...")
+        print(f"📅 [입고조회 4단계] 날짜 범위: {start_dt.strftime('%Y-%m-%d')} ~ {today_dt.strftime('%Y-%m-%d')}")
 
+        date_set_ok = False
         try:
-            # 1) '오늘' 버튼 클릭하여 날짜 필드 초기화
-            today_btns = driver.find_elements(By.XPATH, "//*[text()='오늘']")
-            for btn in today_btns:
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    print("📌 '오늘' 버튼 클릭 (날짜 필드 초기화)")
-                    time.sleep(2)
+            # 방법 1: 기간 버튼 클릭 (가장 확실)
+            period_buttons = ['1주일', '일주일', '7일', '1주'] if days_back <= 7 else ['1개월', '한달', '30일', '1주일']
+            for text in period_buttons:
+                btns = driver.find_elements(By.XPATH, f"//*[text()='{text}']")
+                for btn in btns:
+                    if btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", btn)
+                        print(f"📌 '{text}' 기간 버튼 클릭!")
+                        time.sleep(3)
+                        date_set_ok = True
+                        break
+                if date_set_ok:
                     break
 
-            # 2) 시작일 입력 필드를 days_back일 전으로 변경
-            # 날짜 입력 필드 찾기
-            all_inputs = driver.find_elements(By.TAG_NAME, "input")
-            date_inputs = []
-            for inp in all_inputs:
-                val = (inp.get_attribute('value') or '').strip()
-                inp_type = (inp.get_attribute('type') or '').lower()
-                if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
-                    date_inputs.append((inp, val))
-                elif inp_type == 'date':
-                    date_inputs.append((inp, val))
+            # 방법 2: 날짜 입력 필드 직접 변경
+            if not date_set_ok:
+                print("📌 기간 버튼 없음 → 날짜 입력 필드 직접 변경")
+                all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                date_inputs = []
+                for inp in all_inputs:
+                    val = (inp.get_attribute('value') or '').strip()
+                    inp_type = (inp.get_attribute('type') or '').lower()
+                    if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
+                        date_inputs.append((inp, val))
+                    elif inp_type == 'date':
+                        date_inputs.append((inp, val))
 
-            print(f"📌 날짜 입력 필드 {len(date_inputs)}개 발견: {[v for _, v in date_inputs]}")
+                print(f"📌 날짜 입력 필드 {len(date_inputs)}개 발견: {[v for _, v in date_inputs]}")
 
-            if len(date_inputs) >= 1:
-                start_inp, start_val = date_inputs[0]
-                # 현재 값의 포맷에 맞춰 새 날짜 생성
-                new_val = start_dt.strftime('%Y.%m.%d') if '.' in start_val else start_dt.strftime('%Y-%m-%d')
+                if len(date_inputs) >= 1:
+                    start_inp, start_val = date_inputs[0]
+                    sep = '.' if '.' in start_val else '-'
+                    new_start = start_dt.strftime(f'%Y{sep}%m{sep}%d')
 
-                # 방법 1: send_keys로 직접 타이핑 (가장 확실)
-                try:
-                    start_inp.click()
-                    time.sleep(0.5)
-                    # Ctrl+A → 전체 선택 후 새 값 입력
-                    start_inp.send_keys(Keys.COMMAND + "a" if os.name != 'nt' else Keys.CONTROL + "a")
-                    time.sleep(0.3)
-                    start_inp.send_keys(new_val)
-                    time.sleep(0.3)
-                    start_inp.send_keys(Keys.TAB)  # blur 트리거
-                    time.sleep(1)
-                    # 변경 후 값 확인
-                    after_val = (start_inp.get_attribute('value') or '').strip()
-                    print(f"📌 시작일 변경 (send_keys): {start_val} → {after_val}")
-                except Exception as e1:
-                    print(f"⚠️ send_keys 실패 ({e1}), JS 방식으로 재시도...")
-                    # 방법 2: JS 폴백 (React/jQuery 이벤트 포함)
+                    # JS로 값 설정 + 모든 이벤트 발생
                     driver.execute_script("""
                         var el = arguments[0], newVal = arguments[1];
-                        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                        nativeInputValueSetter.call(el, newVal);
+                        el.focus();
+                        var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeSetter.call(el, newVal);
                         el.dispatchEvent(new Event('input', {bubbles: true}));
                         el.dispatchEvent(new Event('change', {bubbles: true}));
-                        el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
-                    """, start_inp, new_val)
+                        el.dispatchEvent(new Event('blur', {bubbles: true}));
+                    """, start_inp, new_start)
                     time.sleep(1)
+
                     after_val = (start_inp.get_attribute('value') or '').strip()
-                    print(f"📌 시작일 변경 (JS): {start_val} → {after_val}")
-            else:
-                print(f"⚠️ 날짜 입력 필드를 찾지 못함 → 기본 날짜로 조회")
+                    print(f"📌 시작일 변경: {start_val} → {after_val}")
+
+                    if after_val == new_start:
+                        date_set_ok = True
+                    else:
+                        # 폴백: send_keys
+                        print("📌 JS 변경 실패 → send_keys 시도")
+                        start_inp.click()
+                        time.sleep(0.3)
+                        start_inp.send_keys(Keys.COMMAND + "a" if os.name != 'nt' else Keys.CONTROL + "a")
+                        time.sleep(0.2)
+                        start_inp.send_keys(Keys.BACKSPACE)
+                        time.sleep(0.2)
+                        for ch in new_start:
+                            start_inp.send_keys(ch)
+                            time.sleep(0.05)
+                        start_inp.send_keys(Keys.TAB)
+                        time.sleep(1)
+                        after_val2 = (start_inp.get_attribute('value') or '').strip()
+                        print(f"📌 시작일 변경 (send_keys): → {after_val2}")
+                        if after_val2 == new_start:
+                            date_set_ok = True
+                else:
+                    print(f"⚠️ 날짜 입력 필드를 찾지 못함")
         except Exception as e:
             print(f"⚠️ 날짜 범위 설정 실패: {e}")
+
+        if not date_set_ok:
+            print("⚠️ 날짜 변경 실패 → 페이지 기본 날짜로 조회됩니다")
 
         # 검색 버튼 클릭
         try:
@@ -1063,6 +1080,8 @@ def fetch_receiving_data(user_id: str, user_pw: str, days_back: int = 1) -> Dict
                 driver.execute_script("arguments[0].click();", search_btns[0])
                 print("🔍 검색 버튼 클릭!")
                 time.sleep(5)
+            else:
+                print("⚠️ 검색 버튼을 찾지 못함")
         except Exception as e:
             print(f"⚠️ 검색 버튼 클릭 실패: {e}")
 
@@ -1622,44 +1641,66 @@ def _collect_receiving(driver, days_back: int = 1) -> Dict:
         today_dt = datetime.now()
         print(f"📅 [입고] {start_dt.strftime('%Y-%m-%d')} ~ {today_dt.strftime('%Y-%m-%d')}", flush=True)
 
+        date_set_ok = False
         try:
-            for btn in driver.find_elements(By.XPATH, "//*[text()='오늘']"):
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    print("📌 [입고] '오늘' 클릭", flush=True)
-                    time.sleep(2)
+            # 방법 1: 기간 버튼 클릭 (가장 확실)
+            period_buttons = ['1주일', '일주일', '7일', '1주'] if days_back <= 7 else ['1개월', '한달', '30일', '1주일']
+            for text in period_buttons:
+                btns = driver.find_elements(By.XPATH, f"//*[text()='{text}']")
+                for btn in btns:
+                    if btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", btn)
+                        print(f"📌 [입고] '{text}' 기간 버튼 클릭!", flush=True)
+                        time.sleep(3)
+                        date_set_ok = True
+                        break
+                if date_set_ok:
                     break
-        except: pass
 
-        try:
-            date_inputs = []
-            for inp in driver.find_elements(By.TAG_NAME, "input"):
-                val = (inp.get_attribute('value') or '').strip()
-                if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
-                    date_inputs.append((inp, val))
-                elif (inp.get_attribute('type') or '').lower() == 'date':
-                    date_inputs.append((inp, val))
-            print(f"📌 [입고] 날짜필드 {len(date_inputs)}개: {[v for _,v in date_inputs]}", flush=True)
+            # 방법 2: 날짜 입력 필드 직접 변경
+            if not date_set_ok:
+                print("📌 [입고] 기간 버튼 없음 → 날짜 입력 직접 변경", flush=True)
+                date_inputs = []
+                for inp in driver.find_elements(By.TAG_NAME, "input"):
+                    val = (inp.get_attribute('value') or '').strip()
+                    if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
+                        date_inputs.append((inp, val))
+                    elif (inp.get_attribute('type') or '').lower() == 'date':
+                        date_inputs.append((inp, val))
+                print(f"📌 [입고] 날짜필드 {len(date_inputs)}개: {[v for _,v in date_inputs]}", flush=True)
 
-            if date_inputs:
-                si, sv = date_inputs[0]
-                nv = start_dt.strftime('%Y.%m.%d') if '.' in sv else start_dt.strftime('%Y-%m-%d')
-                try:
-                    si.click(); time.sleep(0.5)
-                    si.send_keys(Keys.COMMAND+"a" if os.name!='nt' else Keys.CONTROL+"a")
-                    time.sleep(0.3); si.send_keys(nv); time.sleep(0.3)
-                    si.send_keys(Keys.TAB); time.sleep(1)
-                    print(f"📌 [입고] 시작일: {sv} → {(si.get_attribute('value') or '').strip()}", flush=True)
-                except Exception as e1:
+                if date_inputs:
+                    si, sv = date_inputs[0]
+                    sep = '.' if '.' in sv else '-'
+                    nv = start_dt.strftime(f'%Y{sep}%m{sep}%d')
                     driver.execute_script("""
                         var el=arguments[0],v=arguments[1];
+                        el.focus();
                         var s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
                         s.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));
                         el.dispatchEvent(new Event('change',{bubbles:true}));
+                        el.dispatchEvent(new Event('blur',{bubbles:true}));
                     """, si, nv)
                     time.sleep(1)
+                    av = (si.get_attribute('value') or '').strip()
+                    print(f"📌 [입고] 시작일: {sv} → {av}", flush=True)
+                    if av == nv:
+                        date_set_ok = True
+                    else:
+                        si.click(); time.sleep(0.3)
+                        si.send_keys(Keys.COMMAND+"a" if os.name!='nt' else Keys.CONTROL+"a")
+                        time.sleep(0.2); si.send_keys(Keys.BACKSPACE); time.sleep(0.2)
+                        for ch in nv:
+                            si.send_keys(ch); time.sleep(0.05)
+                        si.send_keys(Keys.TAB); time.sleep(1)
+                        av2 = (si.get_attribute('value') or '').strip()
+                        print(f"📌 [입고] 시작일 (send_keys): → {av2}", flush=True)
+                        if av2 == nv: date_set_ok = True
         except Exception as e:
             print(f"⚠️ [입고] 날짜설정 실패: {e}", flush=True)
+
+        if not date_set_ok:
+            print("⚠️ [입고] 날짜 변경 실패 → 페이지 기본 날짜로 조회", flush=True)
 
         try:
             sbs = driver.find_elements(By.XPATH, "//button[contains(text(),'검색')]")
@@ -1667,7 +1708,10 @@ def _collect_receiving(driver, days_back: int = 1) -> Dict:
                 driver.execute_script("arguments[0].click();", sbs[0])
                 print("🔍 [입고] 검색!", flush=True)
                 time.sleep(5)
-        except: pass
+            else:
+                print("⚠️ [입고] 검색 버튼 없음", flush=True)
+        except Exception as e:
+            print(f"⚠️ [입고] 검색 실패: {e}", flush=True)
 
         print("📊 [입고] 테이블 수집...", flush=True)
         time.sleep(3)

@@ -105,7 +105,8 @@ function loadHistory() {
 
         const savedDeduction = localStorage.getItem(DEDUCTION_STORAGE_KEY);
         if (savedDeduction) {
-            deductionHistory = JSON.parse(savedDeduction);
+            const parsed = JSON.parse(savedDeduction);
+            deductionHistory = Array.isArray(parsed) ? parsed : [];
         }
 
         const savedAd = localStorage.getItem(AD_STORAGE_KEY);
@@ -682,7 +683,7 @@ function renderPivotTable() {
         dates.forEach(date => {
             const dayStockData = stockHistory[date];
 
-            // 입고 조회: productMapping(수동 매핑) 기반
+            // 입고 조회: 정확매칭 → 수동매핑 → 부분매칭(자동)
             let receiving = 0;
             try {
                 const _dr = receivingHistory[date];
@@ -696,6 +697,23 @@ function renderPivotTable() {
                         const mappedSku = productMapping[productName];
                         if (mappedSku && _dr[mappedSku] !== undefined) {
                             receiving = Number(_dr[mappedSku]) || 0;
+                        }
+                    }
+                    // 3) 부분 매칭: SKU명이 상품명을 포함하거나 그 반대
+                    if (receiving === 0) {
+                        const normProduct = productName.replace(/\s+/g, '').toLowerCase();
+                        for (const [skuName, qty] of Object.entries(_dr)) {
+                            const normSku = skuName.replace(/\s+/g, '').toLowerCase();
+                            if (normProduct.length >= 5 && normSku.length >= 5 &&
+                                (normProduct.includes(normSku) || normSku.includes(normProduct))) {
+                                receiving = Number(qty) || 0;
+                                // 자동 매핑 저장 (다음부터 빠르게 매칭)
+                                if (!productMapping[productName]) {
+                                    productMapping[productName] = skuName;
+                                    saveHistory();
+                                }
+                                break;
+                            }
                         }
                     }
                 }
@@ -961,13 +979,16 @@ async function fetchReceivingDataOnly(userId, userPw) {
 // 입고 수집 버튼 이벤트 리스너
 document.addEventListener('click', async (e) => {
     if (e.target.id === 'fetchReceivingBtn' || e.target.closest('#fetchReceivingBtn')) {
+        console.log('📥 입고 수집 버튼 클릭됨');
         const { userId, userPw } = getCredentials();
 
         if (!userId || !userPw) {
+            console.log('⚠️ 로그인 정보 없음 - userId:', !!userId, 'userPw:', !!userPw);
             showToast('먼저 재고 탭에서 로그인해주세요.', 'error');
             return;
         }
 
+        console.log('📥 입고 수집 시작...');
         await fetchReceivingDataOnly(userId, userPw);
     }
 });
@@ -1077,7 +1098,7 @@ async function fetchAllData(userId, userPw) {
                     if (ded.data && ded.data.length > 0) {
                         // 월별 병합: 새 데이터의 월만 교체, 나머지 월 보존
                         const newMonths = new Set(ded.data.map(r => r._query_month).filter(Boolean));
-                        const kept = (deductionHistory || []).filter(r => !newMonths.has(r._query_month));
+                        const kept = (Array.isArray(deductionHistory) ? deductionHistory : []).filter(r => !newMonths.has(r._query_month));
                         deductionHistory = [...kept, ...ded.data];
                         deductionCount = deductionHistory.length;
                         // deductionData도 동기화 (정산내역/손익현황 탭에서 사용)
@@ -1877,11 +1898,13 @@ function renderSettlementDateTable() {
     const m = marginMonth;
     const y = marginYear;
     const daysInMonth = getDaysInMonth(y, m);
+    let setM = m + 2, setY = y;
+    if (setM > 12) { setM -= 12; setY++; }
 
     // 헤더
     thead.innerHTML = `<tr>
         <th>날짜</th>
-        <th style="text-align:right;">${m}월 정산</th>
+        <th style="text-align:right;">${m}월 증빙(${setM}월 정산)</th>
         <th style="text-align:right;">${m}월 광고비</th>
         <th style="text-align:right;">${m}월 수입</th>
         <th style="text-align:right;">${m}월 비용</th>
@@ -1961,9 +1984,11 @@ function renderEvidenceDateTable() {
     const maxDays = Math.max(daysInEvMonth, daysInAdMonth);
 
     // 헤더
+    let setM2 = evM + 2, setY2 = evY;
+    if (setM2 > 12) { setM2 -= 12; setY2++; }
     thead.innerHTML = `<tr>
         <th>날짜</th>
-        <th style="text-align:right;">${evM}월 정산</th>
+        <th style="text-align:right;">${evM}월 증빙(${setM2}월 정산)</th>
         <th style="text-align:right;">${evM}월 수입</th>
         <th style="text-align:right;">${evM}월 비용</th>
         <th style="border-left:2px solid var(--border-color);">날짜</th>
