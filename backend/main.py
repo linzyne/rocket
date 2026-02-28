@@ -12,7 +12,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import atexit
 
-from scraper import fetch_stock_data, fetch_receiving_data, fetch_settlement_data, fetch_deduction_data, fetch_ad_report, fetch_ad_report_only
+from scraper import fetch_stock_data, fetch_receiving_data, fetch_settlement_data, fetch_deduction_data, fetch_ad_report, fetch_ad_report_only, fetch_supplier_combined
 from scheduler import start_scheduler, stop_scheduler, auto_update_all_data, get_last_update_info
 
 # FastAPI 앱 초기화
@@ -179,26 +179,33 @@ async def fetch_receiving(request: LoginRequest):
         
         if result["success"]:
             # Supabase에 입고 데이터 저장 (날짜별 누적)
-            if result.get("data"):
+            data_by_date = result.get("data_by_date", {})
+            if data_by_date or result.get("data"):
                 try:
                     from db import save_data, load_data
-                    from datetime import datetime
-                    today = datetime.now().strftime('%Y-%m-%d')
                     existing = load_data("receiving_history") or {}
-                    # 입고 데이터를 SKU별로 합산
-                    today_receiving = {}
-                    for item in result["data"]:
-                        sku = item.get("sku_name", "")
-                        if sku:
-                            today_receiving[sku] = today_receiving.get(sku, 0) + item.get("quantity", 0)
-                    existing[today] = today_receiving
+                    if data_by_date:
+                        # 날짜별 그룹핑된 데이터 사용
+                        for date_str, sku_data in data_by_date.items():
+                            existing[date_str] = sku_data
+                    else:
+                        # 폴백: date 필드 기반 그룹핑
+                        from datetime import datetime
+                        for item in result["data"]:
+                            sku = item.get("sku_name", "")
+                            d = item.get("date", datetime.now().strftime('%Y-%m-%d'))
+                            if sku:
+                                if d not in existing:
+                                    existing[d] = {}
+                                existing[d][sku] = existing[d].get(sku, 0) + item.get("quantity", 0)
                     save_data("receiving_history", existing)
-                    print(f"✅ Supabase에 입고 데이터 저장 완료 ({today}, {len(today_receiving)}건)")
+                    print(f"✅ Supabase에 입고 데이터 저장 완료 ({len(data_by_date or {})}일치)")
                 except Exception as db_err:
                     print(f"⚠️ Supabase 입고 저장 실패: {db_err}")
             return {
                 "success": True,
                 "data": result.get("data", []),
+                "data_by_date": data_by_date,
                 "count": result.get("count", 0),
                 "timestamp": result.get("timestamp"),
                 "message": result.get("message", "")
@@ -272,17 +279,23 @@ async def fetch_deduction(request: DeductionRequest):
         )
         
         if result["success"]:
-            # 크롤링 성공 시 Supabase에 자동 저장
+            # 크롤링 성공 시 Supabase에 자동 저장 (월별 병합)
             if result.get("data"):
                 try:
-                    from db import save_data
+                    from db import save_data, load_data
+                    new_data = result["data"]
+                    new_months = set(r.get("_query_month", "") for r in new_data if r.get("_query_month"))
+                    existing = load_data("deduction_data") or {}
+                    old_records = existing.get("data", [])
+                    kept = [r for r in old_records if r.get("_query_month", "") not in new_months]
+                    merged = kept + new_data
                     save_data("deduction_data", {
                         "success": True,
-                        "data": result["data"],
-                        "count": result.get("count", 0),
+                        "data": merged,
+                        "count": len(merged),
                         "timestamp": result.get("timestamp")
                     })
-                    print(f"✅ Supabase에 정산 데이터 {len(result['data'])}건 저장 완료")
+                    print(f"✅ Supabase 정산 병합 저장 (기존 {len(kept)}건 + 신규 {len(new_data)}건 = {len(merged)}건)")
                 except Exception as db_err:
                     print(f"⚠️ Supabase 저장 실패: {db_err}")
             return {
@@ -375,40 +388,120 @@ async def trigger_auto_update(background_tasks: BackgroundTasks):
 
 
 
-@app.post("/api/fetch-ad-report")
-async def fetch_ad(request: LoginRequest):
+class SupplierRequest(BaseModel):
+    """공급자 통합 조회 요청 모델"""
+    user_id: str
+    user_pw: str
+    days_back: Optional[int] = 1
+    start_year: Optional[int] = 2025
+    start_month: Optional[int] = 11
+
+
+@app.post("/api/fetch-supplier-all")
+async def fetch_supplier_all(request: SupplierRequest):
     """
-    쿠팡 광고 리포트 데이터를 별도로 조회합니다.
-    
-    - **user_id**: 쿠팡 로그인 ID
-    - **user_pw**: 쿠팡 로그인 비밀번호
+    supplier.coupang.com에 1회 로그인하여 입고 + 정산 데이터를 한 번에 수집합니다.
     """
     try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            fetch_supplier_combined,
+            request.user_id,
+            request.user_pw,
+            request.days_back,
+            request.start_year,
+            request.start_month
+        )
+
+        receiving = result.get("receiving", {})
+        deduction = result.get("deduction", {})
+
+        # 입고 데이터 Supabase 저장
+        if receiving.get("success"):
+            data_by_date = receiving.get("data_by_date", {})
+            if data_by_date:
+                try:
+                    from db import save_data, load_data
+                    existing = load_data("receiving_history") or {}
+                    for date_str, sku_data in data_by_date.items():
+                        existing[date_str] = sku_data
+                    save_data("receiving_history", existing)
+                    print(f"✅ Supabase 입고 저장 ({len(data_by_date)}일치)")
+                except Exception as db_err:
+                    print(f"⚠️ Supabase 입고 저장 실패: {db_err}")
+
+        # 정산 데이터 Supabase 저장 (월별 병합 - 기존 다른 월 데이터 보존)
+        if deduction.get("success") and deduction.get("data"):
+            try:
+                from db import save_data, load_data
+                new_data = deduction["data"]
+                # 새 데이터에 포함된 월 목록
+                new_months = set(r.get("_query_month", "") for r in new_data if r.get("_query_month"))
+                # 기존 데이터에서 새 수집 월에 해당하지 않는 레코드 유지
+                existing = load_data("deduction_data") or {}
+                old_records = existing.get("data", [])
+                kept = [r for r in old_records if r.get("_query_month", "") not in new_months]
+                merged = kept + new_data
+                save_data("deduction_data", {
+                    "success": True,
+                    "data": merged,
+                    "count": len(merged),
+                    "timestamp": deduction.get("timestamp")
+                })
+                print(f"✅ Supabase 정산 병합 저장 (기존 {len(kept)}건 + 신규 {len(new_data)}건 = {len(merged)}건)")
+            except Exception as db_err:
+                print(f"⚠️ Supabase 정산 저장 실패: {db_err}")
+
+        response_data = {
+            "success": True,
+            "receiving": receiving,
+            "deduction": deduction
+        }
+        return response_data
+
+    except Exception as e:
+        print(f"❌ [API 오류] fetch-supplier-all: {e}", flush=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/fetch-ad-report")
+async def fetch_ad(request: SupplierRequest):
+    """
+    쿠팡 광고 리포트 데이터를 별도로 조회합니다.
+    days_back일치 데이터를 수집합니다 (기본: 7일).
+    """
+    try:
+        days_back = request.days_back or 7
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             executor,
             fetch_ad_report_only,
             request.user_id,
             request.user_pw,
+            days_back,
             True  # debug_mode
         )
-        
+
         if result and result["success"]:
-            # Supabase에 광고 데이터 저장 (날짜별 누적)
-            if result.get("data"):
+            # Supabase에 광고 데이터 저장 (날짜별 대체)
+            if result.get("data_by_date"):
                 try:
                     from db import save_data, load_data
-                    from datetime import datetime, timedelta
-                    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
                     existing = load_data("ad_history") or {}
-                    existing[yesterday] = result["data"]
+                    for date_str, ad_data in result["data_by_date"].items():
+                        # 기존에 products(상세)가 있고 새 데이터에 없으면 유지
+                        old = existing.get(date_str)
+                        if old and old.get("products") and not ad_data.get("products"):
+                            ad_data["products"] = old["products"]
+                        existing[date_str] = ad_data
                     save_data("ad_history", existing)
-                    print(f"✅ Supabase에 광고 데이터 저장 완료 ({yesterday})")
+                    print(f"✅ Supabase에 광고 데이터 저장 완료 ({len(result['data_by_date'])}일치)")
                 except Exception as db_err:
                     print(f"⚠️ Supabase 광고 저장 실패: {db_err}")
             return {
                 "success": True,
-                "data": result["data"],
+                "data_by_date": result.get("data_by_date", {}),
                 "timestamp": result["timestamp"]
             }
         else:

@@ -11,6 +11,7 @@ import undetected_chromedriver as uc
 import os
 import time
 import re
+import tempfile
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from typing import List, Dict, Optional, Union
@@ -19,37 +20,64 @@ from typing import List, Dict, Optional, Union
 HEADLESS_MODE = os.getenv("HEADLESS_MODE", "true").lower() == "true"
 
 
+def create_chrome_driver(headless=False):
+    """Google 계정 간섭 없이 깨끗한 Chrome 드라이버를 생성합니다."""
+    uc_options = uc.ChromeOptions()
+    if headless:
+        uc_options.add_argument("--headless=new")
+    uc_options.add_argument("--no-sandbox")
+    uc_options.add_argument("--disable-dev-shm-usage")
+    uc_options.add_argument("--disable-sync")
+    uc_options.add_argument("--no-first-run")
+    uc_options.add_argument("--disable-default-apps")
+    uc_options.add_argument("--disable-background-networking")
+    uc_options.add_argument("--disable-features=Translate,SignInPromo,IdentityConsistency")
+    uc_options.add_argument("--noerrdialogs")
+    driver = uc.Chrome(options=uc_options, user_data_dir=tempfile.mkdtemp(), version_main=145)
+    # Google 계정 페이지가 뜬 경우 무시하고 넘어가기
+    time.sleep(2)
+    if "google.com" in driver.current_url:
+        print("⚠️ Google 계정 페이지 감지 → 무시하고 진행합니다.")
+        driver.get("about:blank")
+        time.sleep(1)
+    return driver
+
+
 def do_login(driver, user_id, user_pw, label=""):
     """
-    공통 로그인 함수: JS로 값 설정 + 이벤트 디스패치 (봇 감지 우회)
+    공통 로그인 함수: Keycloak/일반 로그인 폼 대응
     """
     try:
         pw_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']"))
         )
-        id_field = driver.find_element(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
 
-        # JS로 값 설정 + React/Vue 이벤트 트리거
-        driver.execute_script("""
-            var idField = arguments[0];
-            var pwField = arguments[1];
-            var userId = arguments[2];
-            var userPw = arguments[3];
+        # Keycloak (#username) 우선, 없으면 일반 셀렉터
+        id_fields = driver.find_elements(By.CSS_SELECTOR, "#username")
+        if not id_fields:
+            id_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='text'], input[type='email']")
+        id_field = id_fields[0]
 
-            // 네이티브 setter로 값 설정 (React 호환)
-            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value').set;
+        # 아이디 입력: Ctrl+A로 전체선택 후 덮어쓰기
+        id_field.click()
+        time.sleep(0.3)
+        id_field.send_keys(Keys.CONTROL + "a")
+        id_field.send_keys(Keys.COMMAND + "a")
+        id_field.send_keys(user_id)
+        time.sleep(0.3)
 
-            nativeInputValueSetter.call(idField, userId);
-            idField.dispatchEvent(new Event('input', { bubbles: true }));
-            idField.dispatchEvent(new Event('change', { bubbles: true }));
-
-            nativeInputValueSetter.call(pwField, userPw);
-            pwField.dispatchEvent(new Event('input', { bubbles: true }));
-            pwField.dispatchEvent(new Event('change', { bubbles: true }));
-        """, id_field, pw_field, user_id, user_pw)
-
+        # 비밀번호 입력
+        pw_field.click()
+        time.sleep(0.3)
+        pw_field.send_keys(Keys.CONTROL + "a")
+        pw_field.send_keys(Keys.COMMAND + "a")
+        pw_field.send_keys(user_pw)
         time.sleep(0.5)
+
+        # 입력값 확인 로그
+        id_val = id_field.get_attribute("value")
+        pw_val = pw_field.get_attribute("value")
+        print(f"🔍 {label} 입력 확인 - ID: '{id_val}', PW 길이: {len(pw_val)}")
 
         # 로그인 버튼 클릭
         login_btn = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
@@ -169,13 +197,7 @@ def fetch_stock_data(user_id: str, user_pw: str, debug_mode: bool = True, includ
     driver = None
     try:
         print("🚀 [1단계] 브라우저 실행 중...")
-        uc_options = uc.ChromeOptions()
-        if HEADLESS_MODE and not debug_mode:
-            uc_options.add_argument("--headless=new")
-        uc_options.add_argument("--no-sandbox")
-        uc_options.add_argument("--disable-dev-shm-usage")
-
-        driver = uc.Chrome(options=uc_options)
+        driver = create_chrome_driver(headless=HEADLESS_MODE and not debug_mode)
 
         driver.get("https://advertising.coupang.com/marketing/product-dashboard")
         time.sleep(7)
@@ -397,6 +419,49 @@ def select_yesterday_date(driver):
         print(f"⚠️ 날짜 선택 중 오류: {e}")
     return False
 
+def select_specific_date(driver, date_str):
+    """
+    광고 대시보드에서 특정 날짜를 선택합니다.
+    date_str: 'YYYY-MM-DD' 형식
+    """
+    from datetime import datetime, timedelta
+    # 어제 날짜인지 확인 - 어제면 기존 '어제' 버튼 사용
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    if date_str == yesterday:
+        return select_yesterday_date(driver)
+
+    print(f"📅 [광고리포트] 날짜 '{date_str}' 선택 중...")
+    try:
+        # 대시보드를 날짜 파라미터와 함께 로드
+        target_url = f"https://advertising.coupang.com/marketing/dashboard/sales?dateType=CUSTOM&startDate={date_str}&endDate={date_str}"
+        driver.get(target_url)
+        time.sleep(5)
+
+        # URL 파라미터가 안 먹힐 수 있으므로 날짜 표시 확인
+        # 날짜가 제대로 적용되지 않은 경우 '사용자 정의' 클릭 후 직접 입력 시도
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        if date_str not in page_text:
+            print(f"   ⚠️ URL 파라미터 방식 실패, 날짜 직접 입력 시도...")
+            # Ant Design 날짜 선택기의 입력 필드 찾기
+            from selenium.webdriver.common.keys import Keys
+            date_inputs = driver.find_elements(By.CSS_SELECTOR, ".ant-picker input, input[class*='date'], input[class*='Date']")
+            for inp in date_inputs:
+                if inp.is_displayed():
+                    inp.click()
+                    time.sleep(0.5)
+                    inp.send_keys(Keys.CONTROL + 'a')
+                    inp.send_keys(date_str)
+                    inp.send_keys(Keys.ENTER)
+                    time.sleep(3)
+                    print(f"   📌 날짜 입력 완료: {date_str}")
+                    return True
+        else:
+            print(f"   📌 날짜 '{date_str}' 적용 확인")
+            return True
+    except Exception as e:
+        print(f"⚠️ 날짜 선택 실패 ({date_str}): {e}")
+    return False
+
 def extract_product_table(driver):
     """
     캠페인 상세 페이지에서 상품별 데이터를 추출합니다.
@@ -477,29 +542,31 @@ def extract_product_table(driver):
         
     return products
 
-def fetch_ad_report(driver, target_date='yesterday', debug_mode=True) -> Optional[Dict]:
+def fetch_ad_report(driver, target_date='yesterday', debug_mode=True, collect_campaign_details=True) -> Optional[Dict]:
     """
     현재 로그인된 드라이버 세션을 사용하여 광고 리포트를 수집합니다.
     '광고표준' 대시보드로 이동하여 요약 데이터 및 캠페인별 상세 데이터를 수집합니다.
     """
     try:
-        print("📊 [광고리포트] 대시보드 페이지로 이동 중...")
-        
+        print(f"📊 [광고리포트] 대시보드 페이지로 이동 중... (날짜: {target_date})")
+
         # 1. 사용자 지정 URL로 이동 ('광고표준' 대시보드)
         target_url = "https://advertising.coupang.com/marketing/dashboard/sales"
-        print(f"🔗 [광고리포트] 지정된 대시보드 URL로 이동: {target_url}")
-        
+
         driver.get(target_url)
         time.sleep(5)
-                
+
         # 최종 확인
         if "marketing/dashboard" not in driver.current_url:
              print("⚠️ 페이지 이동 실패: 여전히 다른 페이지에 있습니다. 강제 이동 재시도...")
              driver.get(target_url)
              time.sleep(7)
 
-        # 2. 날짜 선택 ('어제' 클릭)
-        select_yesterday_date(driver)
+        # 2. 날짜 선택
+        if target_date == 'yesterday':
+            select_yesterday_date(driver)
+        else:
+            select_specific_date(driver, target_date)
 
         # 3. 데이터 추출 (요약 데이터)
         print("Reading [광고리포트] 요약 데이터 추출 중...")
@@ -566,9 +633,13 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True) -> Optiona
             print("⚠️ 광고비 데이터를 찾지 못했습니다.")
 
         # 5. 캠페인별 상세 데이터 수집 (Nested Scraping)
+        if not collect_campaign_details:
+            result['products'] = []
+            return result
+
         print("📦 [광고리포트] 캠페인별 상세 데이터 수집 시작 (Nested Scraping)...")
         all_products = []
-        
+
         try:
             # 5-1. 활성 캠페인 탐색 (ON 토글 버튼 기반)
             campaign_targets = [] # {'type': 'url', 'val': url} or {'type': 'click', 'index': i}
@@ -774,21 +845,17 @@ def fetch_ad_report(driver, target_date='yesterday', debug_mode=True) -> Optiona
         traceback.print_exc()
         return None
 
-def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) -> Dict:
+def fetch_ad_report_only(user_id: str, user_pw: str, days_back: int = 1, debug_mode: bool = True) -> Dict:
     """
     광고 리포트 데이터만 독립적으로 수집합니다.
-    브라우저 실행 -> 로그인 -> 광고 리포트 수집 -> 종료 과정을 수행합니다.
+    days_back일치 데이터를 수집하며, 캠페인 상세는 어제분만 수집합니다.
     """
     driver = None
     try:
-        print("🚀 [광고수집 1단계] 브라우저 실행 중...")
-        uc_options = uc.ChromeOptions()
-        if HEADLESS_MODE and not debug_mode:
-            uc_options.add_argument("--headless=new")
-        uc_options.add_argument("--no-sandbox")
-        uc_options.add_argument("--disable-dev-shm-usage")
+        from datetime import datetime, timedelta
 
-        driver = uc.Chrome(options=uc_options)
+        print(f"🚀 [광고수집 1단계] 브라우저 실행 중... ({days_back}일치 수집)")
+        driver = create_chrome_driver(headless=HEADLESS_MODE and not debug_mode)
 
         driver.get("https://advertising.coupang.com/marketing/campaigns")
         time.sleep(7)
@@ -801,11 +868,7 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
 
         try:
             do_login(driver, user_id, user_pw, label="[광고]")
-            
-            # 로그인 후 세션 생성 대기 (너무 빠르면 404 발생 가능)
             time.sleep(6)
-            
-            # 만약 재고 대시보드(기본페이지)로 이동했다면 광고 페이지로 이동
             current_url = driver.current_url
             if "product-dashboard" in current_url or "login" in current_url:
                 target_url = "https://advertising.coupang.com/marketing/dashboard/sales"
@@ -815,14 +878,33 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
         except Exception as login_err:
             print(f"⚠️ 로그인 폼 찾기 실패: {login_err}")
 
-        # 2. 광고 리포트 수집
-        print("\n📈 [광고수집 3단계] 광고 리포트 데이터 추출...")
-        ad_data = fetch_ad_report(driver, debug_mode=debug_mode)
-        
-        if ad_data:
+        # 2. 광고 리포트 수집 (days_back일치)
+        print(f"\n📈 [광고수집 3단계] 광고 리포트 {days_back}일치 데이터 추출...")
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        data_by_date = {}
+
+        for i in range(days_back, 0, -1):
+            target_date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            is_yesterday = (target_date == yesterday_str)
+            print(f"\n📅 [{days_back - i + 1}/{days_back}] {target_date} 수집 중... (상세: {'O' if is_yesterday else 'X'})")
+
+            ad_data = fetch_ad_report(
+                driver,
+                target_date=target_date,
+                debug_mode=debug_mode,
+                collect_campaign_details=is_yesterday
+            )
+
+            if ad_data:
+                data_by_date[target_date] = ad_data
+                print(f"   ✅ {target_date} 수집 완료")
+            else:
+                print(f"   ⚠️ {target_date} 수집 실패")
+
+        if data_by_date:
             return {
                 "success": True,
-                "data": ad_data,
+                "data_by_date": data_by_date,
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
             }
         else:
@@ -843,137 +925,244 @@ def fetch_ad_report_only(user_id: str, user_pw: str, debug_mode: bool = True) ->
             driver.quit()
             print("🔒 [광고수집] 브라우저 종료")
 
-def fetch_receiving_data(user_id: str, user_pw: str) -> Dict:
+def fetch_receiving_data(user_id: str, user_pw: str, days_back: int = 1) -> Dict:
     """
-    쿠팡 로켓 supplier에서 오늘의 입고 데이터를 수집합니다.
-    https://supplier.coupang.com/ → 물류 → 입고상세내역
-    
+    쿠팡 로켓 supplier에서 입고 데이터를 수집합니다.
+    https://supplier.coupang.com/scm/receive/detail 직접 접근
+    날짜 컬럼을 파싱하여 날짜별로 그룹핑하여 반환합니다.
+
     Args:
-        user_id: 쿠팡 사용자 ID
-        user_pw: 쿠팡 사용자 비밀번호
-    
-    Returns:
-        Dict: 성공 시 입고 데이터 (SKU명: 수량), 실패 시 에러 메시지
+        days_back: 며칠 전부터 수집할지 (기본 1 = 어제~오늘, catch-up 시 더 큰 값)
+
+    테이블 컬럼 구조 (0-indexed):
+      0:구분 | 1:번호 | 2:SKU번호 | 3:SKU명 | 4:입고/반출일자 | 5:물류센터
+      6:세금타입 | 7:수량 | 8:단가 | 9:공급가액 | 10:세액 | 11:총단가
+      12:총공급가액 | 13:총세액 | 14:계산서번호 | 15:지급일
     """
     driver = None
     try:
         print("🚀 [입고조회 1단계] 브라우저 실행 중...")
-        uc_options = uc.ChromeOptions()
-        if HEADLESS_MODE:
-            uc_options.add_argument("--headless=new")
-        uc_options.add_argument("--no-sandbox")
-        uc_options.add_argument("--disable-dev-shm-usage")
+        driver = create_chrome_driver(headless=False)
+        # 주의: page_load_timeout/script_timeout 설정하지 않음
+        # Keycloak 리다이렉트 체인이 길어서 타임아웃 나면 로그인 실패함
 
-        driver = uc.Chrome(options=uc_options)
-
-        # supplier.coupang.com 접속
+        # supplier.coupang.com 접속 및 로그인 (Keycloak 리다이렉트 대기)
         driver.get("https://supplier.coupang.com/")
-        time.sleep(5)
+        time.sleep(3)
 
-        # 1. 로그인 단계
         print("🔐 [입고조회 2단계] 로그인 시도 중...")
+        print(f"📌 로그인 페이지 URL: {driver.current_url}")
+
+        # 정산(fetch_deduction_data)과 동일한 방식으로 로그인
         do_login(driver, user_id, user_pw, label="[입고]")
-        
         time.sleep(7)
+        current_url = driver.current_url
+        print(f"📌 로그인 후 URL: {current_url}")
 
-        # 2. 물류 메뉴 클릭
-        print("📦 [입고조회 3단계] 물류 메뉴 탐색 중...")
-        try:
-            # "물류" 메뉴 찾기
-            logistics_menu = driver.find_elements(By.XPATH, "//*[contains(text(), '물류')]")
-            if logistics_menu:
-                driver.execute_script("arguments[0].click();", logistics_menu[0])
-                print("📌 물류 메뉴 클릭!")
-                time.sleep(2)
-        except Exception as e:
-            print(f"⚠️ 물류 메뉴 클릭 오류: {e}")
+        # 로그인 성공 여부 확인 (정보 로깅용, 실패해도 페이지 이동 시도)
+        if "auth" in current_url or "login" in current_url:
+            print("⚠️ [입고] 아직 로그인 페이지에 있음 → 추가 대기 후 재시도")
+            time.sleep(5)
+            # 한 번 더 로그인 시도
+            try:
+                do_login(driver, user_id, user_pw, label="[입고 재시도]")
+                time.sleep(7)
+                print(f"📌 재시도 후 URL: {driver.current_url}")
+            except Exception as retry_err:
+                print(f"⚠️ 재시도 로그인 실패: {retry_err}")
 
-        # 3. 입고상세내역 클릭
-        print("📋 [입고조회 4단계] 입고상세내역 메뉴 클릭...")
+        # 입고상세내역 페이지 직접 이동
+        print("📋 [입고조회 3단계] 입고상세내역 페이지 이동...")
+        driver.get("https://supplier.coupang.com/scm/receive/detail")
+        time.sleep(5)
+        print(f"📌 현재 URL: {driver.current_url}")
+
+        # 로그인이 안 되어 auth 페이지로 리다이렉트됐는지 확인
+        if "auth" in driver.current_url or "login" in driver.current_url:
+            print("❌ [입고] 로그인 실패 - 입고 페이지에 접근할 수 없음")
+            return {
+                "success": False,
+                "error": "입고 페이지 로그인 실패 (로그인 페이지로 리다이렉트됨)",
+                "data": [],
+                "data_by_date": {},
+                "count": 0
+            }
+
+        # 날짜 범위 설정 (days_back일 전 ~ 오늘)
+        from datetime import datetime, timedelta
+        start_dt = datetime.now() - timedelta(days=days_back)
+        today_dt = datetime.now()
+        print(f"📅 [입고조회 4단계] 날짜 범위 설정 ({days_back}일 전 ~ 오늘)...")
+
         try:
-            receiving_menu = driver.find_elements(By.XPATH, "//*[contains(text(), '입고상세내역') or contains(text(), '입고 상세내역')]")
-            if receiving_menu:
-                driver.execute_script("arguments[0].click();", receiving_menu[0])
-                print("📌 입고상세내역 클릭!")
-                time.sleep(5)
+            # 1) '오늘' 버튼 클릭하여 날짜 필드 초기화
+            today_btns = driver.find_elements(By.XPATH, "//*[text()='오늘']")
+            for btn in today_btns:
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    print("📌 '오늘' 버튼 클릭 (날짜 필드 초기화)")
+                    time.sleep(2)
+                    break
+
+            # 2) 시작일 입력 필드를 days_back일 전으로 변경
+            # 날짜 입력 필드 찾기
+            all_inputs = driver.find_elements(By.TAG_NAME, "input")
+            date_inputs = []
+            for inp in all_inputs:
+                val = (inp.get_attribute('value') or '').strip()
+                inp_type = (inp.get_attribute('type') or '').lower()
+                if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
+                    date_inputs.append((inp, val))
+                elif inp_type == 'date':
+                    date_inputs.append((inp, val))
+
+            print(f"📌 날짜 입력 필드 {len(date_inputs)}개 발견: {[v for _, v in date_inputs]}")
+
+            if len(date_inputs) >= 1:
+                start_inp, start_val = date_inputs[0]
+                # 현재 값의 포맷에 맞춰 새 날짜 생성
+                new_val = start_dt.strftime('%Y.%m.%d') if '.' in start_val else start_dt.strftime('%Y-%m-%d')
+
+                # 방법 1: send_keys로 직접 타이핑 (가장 확실)
+                try:
+                    start_inp.click()
+                    time.sleep(0.5)
+                    # Ctrl+A → 전체 선택 후 새 값 입력
+                    start_inp.send_keys(Keys.COMMAND + "a" if os.name != 'nt' else Keys.CONTROL + "a")
+                    time.sleep(0.3)
+                    start_inp.send_keys(new_val)
+                    time.sleep(0.3)
+                    start_inp.send_keys(Keys.TAB)  # blur 트리거
+                    time.sleep(1)
+                    # 변경 후 값 확인
+                    after_val = (start_inp.get_attribute('value') or '').strip()
+                    print(f"📌 시작일 변경 (send_keys): {start_val} → {after_val}")
+                except Exception as e1:
+                    print(f"⚠️ send_keys 실패 ({e1}), JS 방식으로 재시도...")
+                    # 방법 2: JS 폴백 (React/jQuery 이벤트 포함)
+                    driver.execute_script("""
+                        var el = arguments[0], newVal = arguments[1];
+                        var nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(el, newVal);
+                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                        el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+                    """, start_inp, new_val)
+                    time.sleep(1)
+                    after_val = (start_inp.get_attribute('value') or '').strip()
+                    print(f"📌 시작일 변경 (JS): {start_val} → {after_val}")
             else:
-                # 링크로 직접 접근 시도
-                driver.get("https://supplier.coupang.com/wms/receiving-detail")
+                print(f"⚠️ 날짜 입력 필드를 찾지 못함 → 기본 날짜로 조회")
+        except Exception as e:
+            print(f"⚠️ 날짜 범위 설정 실패: {e}")
+
+        # 검색 버튼 클릭
+        try:
+            search_btns = driver.find_elements(By.XPATH, "//button[contains(text(), '검색')]")
+            if search_btns:
+                driver.execute_script("arguments[0].click();", search_btns[0])
+                print("🔍 검색 버튼 클릭!")
                 time.sleep(5)
         except Exception as e:
-            print(f"⚠️ 입고상세내역 클릭 오류: {e}")
+            print(f"⚠️ 검색 버튼 클릭 실패: {e}")
 
-        # 4. 테이블 데이터 수집 (오늘 날짜는 자동으로 설정됨)
+        # 테이블 데이터 수집
         print("📊 [입고조회 5단계] 입고 데이터 수집 중...")
         time.sleep(3)
-        
-        receiving_data = {}  # SKU명: 합산 수량
-        
+
+        receiving_data = {}  # {날짜: {SKU명: 합산수량}}
+        today_fallback = today_dt.strftime('%Y-%m-%d')
+
         try:
-            # 테이블 행 찾기
-            table_rows = driver.find_elements(By.XPATH, "//table//tr")
-            
+            table_rows = driver.find_elements(By.XPATH, "//table//tbody//tr")
+            if not table_rows:
+                table_rows = driver.find_elements(By.XPATH, "//table//tr")
+            print(f"📋 테이블 행 수: {len(table_rows)}")
+
+            # 헤더 기반 컬럼 인덱스 탐지
+            col_sku = 3   # SKU 명 기본 인덱스
+            col_qty = 7   # 수량 기본 인덱스
+            col_date = 4  # 입고/반출일자 기본 인덱스
+
+            header_rows = driver.find_elements(By.XPATH, "//table//thead//tr | //table//tr[th]")
+            if header_rows:
+                headers = header_rows[0].find_elements(By.TAG_NAME, "th")
+                header_texts = [h.text.strip() for h in headers]
+                print(f"📋 테이블 헤더: {header_texts}")
+
+                for idx, h in enumerate(header_texts):
+                    if 'SKU 명' in h or 'SKU명' in h:
+                        col_sku = idx
+                    if h == '수량':
+                        col_qty = idx
+                    if '일자' in h:
+                        col_date = idx
+
+                print(f"📋 컬럼 인덱스 - SKU명: {col_sku}, 수량: {col_qty}, 일자: {col_date}")
+
             for row in table_rows:
                 try:
                     cells = row.find_elements(By.TAG_NAME, "td")
-                    if len(cells) >= 5:
-                        # 두 번째 이미지 기준: SKU 명 (index 3), 수량 (index 7)
-                        # 실제 인덱스는 페이지에 따라 다를 수 있음
-                        sku_name = ""
-                        quantity = 0
-                        
-                        # SKU 명 찾기 (보통 3~4번째 컬럼)
-                        for i, cell in enumerate(cells):
-                            cell_text = cell.text.strip()
-                            # 수량 찾기 (숫자만 있는 셀 중 적절한 위치)
-                            if i >= 3 and i <= 4 and len(cell_text) > 5:
-                                sku_name = cell_text
-                            if i >= 7 and i <= 8 and cell_text.isdigit():
-                                quantity = int(cell_text)
-                        
-                        if sku_name and quantity > 0:
-                            # 같은 SKU명은 수량 합산
-                            if sku_name in receiving_data:
-                                receiving_data[sku_name] += quantity
-                            else:
-                                receiving_data[sku_name] = quantity
+                    if len(cells) <= max(col_sku, col_qty):
+                        continue
+
+                    sku_name = cells[col_sku].text.strip()
+                    qty_text = cells[col_qty].text.strip().replace(',', '')
+
+                    if not sku_name or len(sku_name) < 2:
+                        continue
+
+                    quantity = int(qty_text) if qty_text.isdigit() else 0
+                    if quantity <= 0:
+                        continue
+
+                    # 날짜 파싱 (YYYY.MM.DD 또는 YYYY-MM-DD → YYYY-MM-DD)
+                    row_date = today_fallback
+                    if len(cells) > col_date:
+                        date_text = cells[col_date].text.strip()
+                        normalized = date_text.replace('.', '-').replace('/', '-')[:10]
+                        if re.match(r'\d{4}-\d{2}-\d{2}', normalized):
+                            row_date = normalized
+
+                    if row_date not in receiving_data:
+                        receiving_data[row_date] = {}
+                    receiving_data[row_date][sku_name] = receiving_data[row_date].get(sku_name, 0) + quantity
+                    print(f"✅ [{row_date}] {sku_name} → 수량 {quantity}")
+
                 except Exception:
                     continue
-            
-            # 대체 방법: 페이지 텍스트에서 추출
+
+            # 데이터 없을 때 체크
             if not receiving_data:
-                print("📄 테이블 파싱 실패, 텍스트 추출 시도...")
                 body_text = driver.find_element(By.TAG_NAME, "body").text
-                
-                # "해당하는 검색조건에 대한 결과가 없습니다" 체크
-                if "결과가 없습니다" in body_text or "데이터가 없습니다" in body_text:
-                    print("ℹ️ 오늘 입고 데이터가 없습니다.")
+                if "결과가 없습니다" in body_text or "데이터가 없습니다" in body_text or "검색 건수\n0" in body_text:
+                    print("ℹ️ 입고 데이터가 없습니다.")
                     return {
                         "success": True,
-                        "data": {},
+                        "data": [],
+                        "data_by_date": {},
                         "count": 0,
                         "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-                        "message": "오늘 입고 데이터 없음"
+                        "message": "입고 데이터 없음"
                     }
-                
-                # 텍스트에서 데이터 추출 시도
-                lines = body_text.split('\n')
-                print(f"📄 페이지 라인 수: {len(lines)}")
-                
+                print(f"⚠️ 테이블 파싱 실패. 페이지 텍스트 일부: {body_text[:500]}")
+
         except Exception as e:
             print(f"⚠️ 데이터 수집 중 오류: {e}")
 
-        print(f"\n🎊 입고 조회 완료! {len(receiving_data)}개 SKU 수집")
-        
-        # 리스트 형태로 변환
-        receiving_list = [
-            {"sku_name": sku, "quantity": qty}
-            for sku, qty in receiving_data.items()
-        ]
-        
+        total_skus = sum(len(v) for v in receiving_data.values())
+        print(f"\n🎊 입고 조회 완료! {len(receiving_data)}일 × {total_skus}개 SKU 수집")
+
+        # 기존 호환 리스트 + 날짜별 그룹 데이터 모두 반환
+        receiving_list = []
+        for date_str, items in receiving_data.items():
+            for sku, qty in items.items():
+                receiving_list.append({"sku_name": sku, "quantity": qty, "date": date_str})
+
         return {
             "success": True,
             "data": receiving_list,
+            "data_by_date": receiving_data,
             "count": len(receiving_list),
             "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -1017,13 +1206,7 @@ def fetch_settlement_data(user_id: str, user_pw: str) -> Dict:
     driver = None
     try:
         print("🚀 [정산조회 1단계] 브라우저 실행 중...")
-        uc_options = uc.ChromeOptions()
-        if HEADLESS_MODE:
-            uc_options.add_argument("--headless=new")
-        uc_options.add_argument("--no-sandbox")
-        uc_options.add_argument("--disable-dev-shm-usage")
-
-        driver = uc.Chrome(options=uc_options)
+        driver = create_chrome_driver(headless=HEADLESS_MODE)
 
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
@@ -1156,12 +1339,7 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
 
     try:
         log("🚀 [1단계] 브라우저 실행 중...")
-        uc_options = uc.ChromeOptions()
-        # headless 사용 안 함 (쿠팡 봇 감지 우회)
-        uc_options.add_argument("--no-sandbox")
-        uc_options.add_argument("--disable-dev-shm-usage")
-
-        driver = uc.Chrome(options=uc_options)
+        driver = create_chrome_driver(headless=False)
 
         # supplier.coupang.com 접속
         driver.get("https://supplier.coupang.com/")
@@ -1388,4 +1566,270 @@ def fetch_deduction_data(user_id: str, user_pw: str, start_year: int = 2025, sta
             driver.quit()
             print("🔒 브라우저 종료")
 
+
+def fetch_supplier_combined(user_id: str, user_pw: str, days_back: int = 1,
+                            start_year: int = 2025, start_month: int = 11) -> Dict:
+    """
+    supplier.coupang.com에 한 번 로그인 → 입고 + 정산 모두 수집.
+    fetch_deduction_data(작동함)와 동일한 브라우저/로그인 방식.
+    """
+    driver = None
+    try:
+        print("🚀 [공급자통합] 브라우저 실행...", flush=True)
+        driver = create_chrome_driver(headless=False)
+
+        driver.get("https://supplier.coupang.com/")
+        time.sleep(3)
+        print(f"📌 접속: {driver.current_url}", flush=True)
+
+        print("🔐 [공급자통합] 로그인...", flush=True)
+        do_login(driver, user_id, user_pw, label="[공급자통합]")
+        time.sleep(7)
+        print(f"📌 로그인 후: {driver.current_url}", flush=True)
+
+        receiving_result = _collect_receiving(driver, days_back)
+        time.sleep(2)
+        deduction_result = _collect_deduction(driver, start_year, start_month)
+
+        return {"receiving": receiving_result, "deduction": deduction_result}
+    except Exception as e:
+        print(f"❌ 공급자통합 에러: {e}", flush=True)
+        return {
+            "receiving": {"success": False, "error": str(e), "data": [], "data_by_date": {}, "count": 0},
+            "deduction": {"success": False, "error": str(e), "data": [], "count": 0}
+        }
+    finally:
+        if driver:
+            time.sleep(2)
+            driver.quit()
+            print("🔒 [공급자통합] 브라우저 종료", flush=True)
+
+
+def _collect_receiving(driver, days_back: int = 1) -> Dict:
+    """이미 로그인된 driver로 입고 데이터 수집"""
+    from datetime import datetime, timedelta
+    try:
+        print("📋 [입고] 페이지 이동...", flush=True)
+        driver.get("https://supplier.coupang.com/scm/receive/detail")
+        time.sleep(5)
+        print(f"📌 [입고] URL: {driver.current_url}", flush=True)
+
+        if "auth" in driver.current_url or "login" in driver.current_url:
+            print("❌ [입고] 세션 없음", flush=True)
+            return {"success": False, "error": "세션 없음", "data": [], "data_by_date": {}, "count": 0}
+
+        start_dt = datetime.now() - timedelta(days=days_back)
+        today_dt = datetime.now()
+        print(f"📅 [입고] {start_dt.strftime('%Y-%m-%d')} ~ {today_dt.strftime('%Y-%m-%d')}", flush=True)
+
+        try:
+            for btn in driver.find_elements(By.XPATH, "//*[text()='오늘']"):
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    print("📌 [입고] '오늘' 클릭", flush=True)
+                    time.sleep(2)
+                    break
+        except: pass
+
+        try:
+            date_inputs = []
+            for inp in driver.find_elements(By.TAG_NAME, "input"):
+                val = (inp.get_attribute('value') or '').strip()
+                if re.match(r'\d{4}[.\-]\d{2}[.\-]\d{2}', val):
+                    date_inputs.append((inp, val))
+                elif (inp.get_attribute('type') or '').lower() == 'date':
+                    date_inputs.append((inp, val))
+            print(f"📌 [입고] 날짜필드 {len(date_inputs)}개: {[v for _,v in date_inputs]}", flush=True)
+
+            if date_inputs:
+                si, sv = date_inputs[0]
+                nv = start_dt.strftime('%Y.%m.%d') if '.' in sv else start_dt.strftime('%Y-%m-%d')
+                try:
+                    si.click(); time.sleep(0.5)
+                    si.send_keys(Keys.COMMAND+"a" if os.name!='nt' else Keys.CONTROL+"a")
+                    time.sleep(0.3); si.send_keys(nv); time.sleep(0.3)
+                    si.send_keys(Keys.TAB); time.sleep(1)
+                    print(f"📌 [입고] 시작일: {sv} → {(si.get_attribute('value') or '').strip()}", flush=True)
+                except Exception as e1:
+                    driver.execute_script("""
+                        var el=arguments[0],v=arguments[1];
+                        var s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
+                        s.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));
+                        el.dispatchEvent(new Event('change',{bubbles:true}));
+                    """, si, nv)
+                    time.sleep(1)
+        except Exception as e:
+            print(f"⚠️ [입고] 날짜설정 실패: {e}", flush=True)
+
+        try:
+            sbs = driver.find_elements(By.XPATH, "//button[contains(text(),'검색')]")
+            if sbs:
+                driver.execute_script("arguments[0].click();", sbs[0])
+                print("🔍 [입고] 검색!", flush=True)
+                time.sleep(5)
+        except: pass
+
+        print("📊 [입고] 테이블 수집...", flush=True)
+        time.sleep(3)
+
+        receiving_data = {}
+        today_fallback = today_dt.strftime('%Y-%m-%d')
+
+        trs = driver.find_elements(By.XPATH, "//table//tbody//tr")
+        if not trs: trs = driver.find_elements(By.XPATH, "//table//tr")
+        print(f"📋 [입고] 행: {len(trs)}", flush=True)
+
+        cs, cq, cd = 3, 7, 4
+        hrs = driver.find_elements(By.XPATH, "//table//thead//tr|//table//tr[th]")
+        if hrs:
+            ht = [h.text.strip() for h in hrs[0].find_elements(By.TAG_NAME, "th")]
+            print(f"📋 [입고] 헤더: {ht}", flush=True)
+            for i, h in enumerate(ht):
+                if 'SKU 명' in h or 'SKU명' in h: cs = i
+                if h == '수량': cq = i
+                if '일자' in h: cd = i
+
+        for row in trs:
+            try:
+                cells = row.find_elements(By.TAG_NAME, "td")
+                if len(cells) <= max(cs, cq): continue
+                sn = cells[cs].text.strip()
+                qt = cells[cq].text.strip().replace(',', '')
+                if not sn or len(sn) < 2: continue
+                q = int(qt) if qt.isdigit() else 0
+                if q <= 0: continue
+                rd = today_fallback
+                if len(cells) > cd:
+                    dt = cells[cd].text.strip().replace('.', '-').replace('/', '-')[:10]
+                    if re.match(r'\d{4}-\d{2}-\d{2}', dt): rd = dt
+                if rd not in receiving_data: receiving_data[rd] = {}
+                receiving_data[rd][sn] = receiving_data[rd].get(sn, 0) + q
+                print(f"✅ [입고] [{rd}] {sn} → {q}", flush=True)
+            except: continue
+
+        if not receiving_data:
+            bt = driver.find_element(By.TAG_NAME, "body").text
+            if any(k in bt for k in ["결과가 없습니다", "데이터가 없습니다", "검색 건수\n0"]):
+                print("ℹ️ [입고] 데이터 없음", flush=True)
+            else:
+                print(f"⚠️ [입고] 파싱실패: {bt[:300]}", flush=True)
+
+        ts = sum(len(v) for v in receiving_data.values())
+        print(f"🎊 [입고] {len(receiving_data)}일 × {ts}SKU", flush=True)
+
+        rl = []
+        for ds, items in receiving_data.items():
+            for sku, qty in items.items():
+                rl.append({"sku_name": sku, "quantity": qty, "date": ds})
+        return {"success": True, "data": rl, "data_by_date": receiving_data,
+                "count": len(rl), "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')}
+    except Exception as e:
+        print(f"❌ [입고] 에러: {e}", flush=True)
+        return {"success": False, "error": str(e), "data": [], "data_by_date": {}, "count": 0}
+
+
+def _collect_deduction(driver, start_year: int = 2025, start_month: int = 11) -> Dict:
+    """이미 로그인된 driver로 정산 데이터 수집"""
+    import datetime as dt_module
+    from selenium.webdriver.support.ui import Select
+    logs = []
+    def log(msg):
+        print(msg, flush=True)
+        logs.append(msg)
+
+    try:
+        log("💰 [정산] 페이지 이동...")
+        driver.get("https://supplier.coupang.com/scm/settlement/deductible/amount/account?searchType=PAYMENT")
+        time.sleep(5)
+        log(f"📌 [정산] URL: {driver.current_url}")
+
+        try:
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "year")))
+            log("✅ [정산] 로딩 완료")
+        except:
+            log("⚠️ [정산] 타임아웃, 재시도...")
+            driver.get("https://supplier.coupang.com/scm/settlement/deductible/amount/account?searchType=PAYMENT")
+            time.sleep(5)
+
+        all_data = []
+        today = dt_module.date.today()
+        cy, cm = today.year, today.month
+        year, month = start_year, start_month
+
+        while (year < cy) or (year == cy and month <= cm):
+            log(f"📅 [정산] {year}년 {month}월...")
+            try:
+                ys = Select(driver.find_element(By.ID, "year"))
+                try: ys.select_by_value(str(year))
+                except:
+                    try: ys.select_by_visible_text(f"{year}년")
+                    except: ys.select_by_visible_text(str(year))
+                time.sleep(0.5)
+
+                ms = Select(driver.find_element(By.ID, "month"))
+                try: ms.select_by_value(str(month))
+                except:
+                    try: ms.select_by_visible_text(f"{month}월")
+                    except: ms.select_by_visible_text(str(month))
+                time.sleep(1)
+
+                sb = driver.find_elements(By.XPATH, "//button[contains(text(),'검색')]")
+                if not sb: sb = driver.find_elements(By.XPATH, "//button[@type='submit' or @type='button']")
+                if sb: driver.execute_script("arguments[0].click();", sb[0]); time.sleep(3)
+
+                try:
+                    p1 = driver.find_elements(By.XPATH, "//*[contains(@class,'pagination')]//button[text()='1']|//*[contains(@class,'pagination')]//a[text()='1']|//nav//button[text()='1']|//nav//a[text()='1']")
+                    if p1: driver.execute_script("arguments[0].click();", p1[0]); time.sleep(2)
+                except: pass
+
+                mp = 1
+                try:
+                    for b in driver.find_elements(By.XPATH, "//*[contains(@class,'pagination')]//button|//*[contains(@class,'pagination')]//a|//nav//button|//nav//a"):
+                        t = b.text.strip()
+                        if t.isdigit() and int(t) > mp: mp = int(t)
+                except: pass
+
+                tr_total = 0
+                for cp in range(1, mp + 1):
+                    if cp > 1:
+                        try:
+                            pb = driver.find_elements(By.XPATH, f"//*[contains(@class,'pagination')]//button[text()='{cp}']|//*[contains(@class,'pagination')]//a[text()='{cp}']|//nav//button[text()='{cp}']|//nav//a[text()='{cp}']")
+                            if pb: driver.execute_script("arguments[0].click();", pb[0]); time.sleep(2)
+                        except: continue
+
+                    trs = driver.find_elements(By.XPATH, "//table//tr")
+                    if cp == 1:
+                        headers = []
+                        if trs:
+                            hc = trs[0].find_elements(By.TAG_NAME, "th")
+                            headers = [c.text.strip() for c in hc]
+                            if headers and ('상세' in headers[-1] or '내역' in headers[-1]):
+                                headers = headers[:-1]
+
+                    rip = 0
+                    for row in trs[1:]:
+                        cells = row.find_elements(By.TAG_NAME, "td")
+                        if len(cells) >= 2:
+                            rd = {}
+                            for i, c in enumerate(cells[:-1]):
+                                if i < len(headers): rd[headers[i]] = c.text.strip()
+                                else: rd[f"col_{i}"] = c.text.strip()
+                            rd["_query_month"] = f"{year}-{str(month).zfill(2)}"
+                            if rd: all_data.append(rd); rip += 1
+                    tr_total += rip
+                    log(f"   📄 [정산] {cp}/{mp}p: {rip}행")
+                log(f"   → {tr_total}행")
+            except Exception as e:
+                log(f"⚠️ [정산] {year}년 {month}월 오류: {e}")
+
+            month += 1
+            if month > 12: month = 1; year += 1
+            time.sleep(1)
+
+        log(f"📊 [정산] 총 {len(all_data)}개")
+        return {"success": True, "data": all_data, "count": len(all_data),
+                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'), "message": " | ".join(logs)}
+    except Exception as e:
+        log(f"❌ [정산] 에러: {e}")
+        return {"success": False, "error": str(e), "data": [], "count": 0, "message": " | ".join(logs)}
 

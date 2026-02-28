@@ -80,7 +80,7 @@
                 <button class="tab-btn" data-tab="stock">📦 재고</button>
                 <button class="tab-btn" data-tab="ad">📢 광고비</button>
                 <button class="tab-btn" data-tab="deduction">📋 정산내역</button>
-                <button class="tab-btn" data-tab="margin">🚀 로켓발주</button>
+                <button class="tab-btn" data-tab="margin">📈 손익현황</button>
                 <button class="btn btn-primary btn-sm" id="fetchAllDataBtn" style="margin-left: auto;">
                     <span>🔄</span> 전체 데이터 수집
                 </button>
@@ -97,9 +97,9 @@
                             <span style="color:var(--text-muted);">~</span>
                             <input type="date" id="dashEndDate"
                                 style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-primary); font-size:0.85rem;">
-                            <button class="btn btn-outline btn-sm dash-period-btn" id="dashYesterdayBtn"
+                            <button class="btn btn-outline btn-sm dash-period-btn active" id="dashYesterdayBtn"
                                 style="padding:5px 12px;">어제</button>
-                            <button class="btn btn-outline btn-sm dash-period-btn active" id="dashTodayBtn"
+                            <button class="btn btn-outline btn-sm dash-period-btn" id="dashTodayBtn"
                                 style="padding:5px 12px;">오늘</button>
                             <button class="btn btn-outline btn-sm dash-period-btn" id="dashWeekBtn"
                                 style="padding:5px 12px;">7일</button>
@@ -358,12 +358,12 @@
                 </div>
             </div> <!-- deductionTab 끝 -->
 
-            <!-- 로켓발주 탭 컨텐츠 -->
+            <!-- 손익현황 탭 컨텐츠 -->
             <div class="tab-content" id="marginTab">
                 <!-- 헤더 영역 -->
                 <div class="result-header">
                     <div class="result-title">
-                        <h2>🚀 로켓발주</h2>
+                        <h2>📈 손익현황</h2>
                     </div>
                     <div class="result-actions" style="display:flex; gap:8px;">
                         <button class="btn btn-outline btn-sm" id="addItemBtnTop">
@@ -411,6 +411,10 @@
                             <span>➕</span> 항목 추가
                         </button>
                     </div>
+                    <div class="quick-input-bar">
+                        <input type="text" class="quick-input" data-mode="income" placeholder="예: 재고구매 10만원, 2/15 샘플 3만원">
+                        <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
+                    </div>
                     <div style="overflow-x: auto;">
                         <table class="ledger-table" style="width:100%;">
                             <thead>
@@ -441,10 +445,14 @@
                 <!-- � 비용내역 섹션 -->
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2>� 비용내역</h2>
+                        <h2>💸 비용내역</h2>
                         <button class="btn btn-outline btn-sm" id="addExpenseBtn">
                             <span>➕</span> 비용 추가
                         </button>
+                    </div>
+                    <div class="quick-input-bar">
+                        <input type="text" class="quick-input" data-mode="expense" placeholder="예: 포장재 3만원, 어제 택배비 5천원">
+                        <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
                     </div>
                     <div style="overflow-x: auto;">
                         <table class="ledger-table" style="width:100%;">

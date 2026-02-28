@@ -166,33 +166,28 @@ async function loadAllCachedData() {
             });
             loaded++;
         } else if (key === 'receiving' && data && typeof data === 'object') {
-            // 날짜별 입고 데이터 병합
+            // 날짜별 입고 데이터 병합 (서버 데이터가 더 크면 덮어쓰기)
             Object.keys(data).forEach(date => {
-                if (!receivingHistory[date]) {
-                    receivingHistory[date] = data[date];
+                const serverData = data[date];
+                const localData = receivingHistory[date];
+                if (!localData || Object.keys(serverData || {}).length > Object.keys(localData || {}).length) {
+                    receivingHistory[date] = serverData;
                 }
             });
             loaded++;
         } else if (key === 'ad' && data && typeof data === 'object') {
-            // 날짜별 광고 데이터 병합
+            // 날짜별 광고 데이터 대체
             Object.keys(data).forEach(date => {
-                if (!adHistory[date]) {
-                    adHistory[date] = data[date];
-                }
+                adHistory[date] = data[date];
             });
             loaded++;
         } else if (key === 'deduction' && Array.isArray(data) && data.length > 0) {
-            // 정산 데이터 병합 (deductionData는 정산내역/로켓발주 탭에서 사용)
-            if (typeof deductionData !== 'undefined' && (!deductionData || deductionData.length === 0)) {
+            // 정산 데이터 병합 (deductionData + deductionHistory 동기화)
+            if (!deductionData || deductionData.length === 0) {
                 deductionData = data;
-                // localStorage에도 저장
-                try {
-                    localStorage.setItem(DEDUCTION_STORAGE_KEY, JSON.stringify({
-                        data: data,
-                        headers: data.length > 0 ? Object.keys(data[0]).filter(k => !k.startsWith('_')) : [],
-                        lastUpdate: new Date().toISOString()
-                    }));
-                } catch(e) {}
+                deductionHistory = data;
+                deductionHeaders = data.length > 0 ? Object.keys(data[0]).filter(k => !k.startsWith('_')) : [];
+                if (typeof saveDeductionData === 'function') saveDeductionData();
             }
             loaded++;
         }
@@ -200,7 +195,6 @@ async function loadAllCachedData() {
 
     if (loaded > 0) {
         saveHistory();
-        console.log(`📡 서버에서 ${loaded}종 데이터 로드 완료`);
     }
     return loaded;
 }
@@ -405,18 +399,28 @@ function suggestAutoMatching() {
 
 /**
  * 매핑된 입고 수량 가져오기
+ * 1순위: 명시적 매핑 (productMapping)
+ * 2순위: 자동 키워드 매칭 (매핑 없을 때)
  * @param {string} productName - 광고 상품명
  * @param {string} date - 날짜
  * @returns {number} - 입고 수량 (매핑된 SKU 기준)
  */
 function getMappedReceiving(productName, date) {
-    const skuName = productMapping[productName];
-    if (!skuName) return 0;
+    try {
+        const dayReceiving = receivingHistory[date];
+        if (!dayReceiving || typeof dayReceiving !== 'object') return 0;
 
-    const dayReceiving = receivingHistory[date];
-    if (!dayReceiving) return 0;
+        // 1) 정확 매칭 (상품명 == SKU명)
+        if (dayReceiving[productName] !== undefined) return Number(dayReceiving[productName]) || 0;
 
-    return dayReceiving[skuName] || 0;
+        // 2) 수동 매핑 (productMapping)
+        const skuName = productMapping[productName];
+        if (skuName && dayReceiving[skuName] !== undefined) return Number(dayReceiving[skuName]) || 0;
+
+        return 0;
+    } catch(e) {
+        return 0;
+    }
 }
 
 /**
@@ -574,7 +578,7 @@ function getAllProducts() {
         });
     });
 
-    // 현재 월 판매량 계산
+    // 현재 월 판매량 계산 (직접 입고 조회)
     const salesMap = {};
     productMap.forEach((_, productName) => {
         let prevStock = null;
@@ -585,7 +589,21 @@ function getAllProducts() {
             const item = dayData.find(d => d.product_name === productName);
             if (!item) return;
             if (prevStock !== null) {
-                const receiving = typeof getMappedReceiving === 'function' ? getMappedReceiving(productName, date) : 0;
+                let receiving = 0;
+                try {
+                    const _dr = receivingHistory[date];
+                    if (_dr && typeof _dr === 'object') {
+                        if (_dr[productName] !== undefined) {
+                            receiving = Number(_dr[productName]) || 0;
+                        }
+                        if (receiving === 0) {
+                            const mappedSku = productMapping[productName];
+                            if (mappedSku && _dr[mappedSku] !== undefined) {
+                                receiving = Number(_dr[mappedSku]) || 0;
+                            }
+                        }
+                    }
+                } catch(e) {}
                 const sales = prevStock + receiving - item.stock;
                 if (sales > 0) totalSales += sales;
             }
@@ -619,6 +637,7 @@ function renderPivotTable() {
     const dates = getCurrentMonthDates();
     const products = getAllProducts();
     const today = getTodayString();
+
 
     if (products.length === 0) {
         elements.pivotTableHead.innerHTML = '';
@@ -662,18 +681,36 @@ function renderPivotTable() {
 
         dates.forEach(date => {
             const dayStockData = stockHistory[date];
-            const receiving = getMappedReceiving(productName, date);
+
+            // 입고 조회: productMapping(수동 매핑) 기반
+            let receiving = 0;
+            try {
+                const _dr = receivingHistory[date];
+                if (_dr && typeof _dr === 'object') {
+                    // 1) 정확 매칭 (상품명 == SKU명)
+                    if (_dr[productName] !== undefined) {
+                        receiving = Number(_dr[productName]) || 0;
+                    }
+                    // 2) 수동 매핑 (productMapping)
+                    if (receiving === 0) {
+                        const mappedSku = productMapping[productName];
+                        if (mappedSku && _dr[mappedSku] !== undefined) {
+                            receiving = Number(_dr[mappedSku]) || 0;
+                        }
+                    }
+                }
+            } catch(e) {}
+
+            // 입고 표시 HTML
+            const receivingHtml = receiving > 0
+                ? `<span class="receiving-cell positive">+${receiving}</span>`
+                : '<span class="empty-cell">-</span>';
 
             if (dayStockData) {
                 const item = dayStockData.find(d => d.product_name === productName);
 
                 if (item) {
                     const stock = item.stock;
-
-                    // 입고 표시
-                    const receivingHtml = receiving > 0
-                        ? `<span class="receiving-cell positive">+${receiving}</span>`
-                        : '<span class="empty-cell">-</span>';
 
                     // 판매량 계산: 전날재고 + 오늘입고 - 오늘재고
                     let salesHtml = '-';
@@ -694,10 +731,12 @@ function renderPivotTable() {
 
                     prevStock = stock;
                 } else {
-                    bodyHtml += `<td class="empty-cell">-</td><td class="empty-cell">-</td><td class="empty-cell">-</td>`;
+                    // 재고 없지만 입고 있으면 표시
+                    bodyHtml += `<td>${receivingHtml}</td><td class="empty-cell">-</td><td class="empty-cell">-</td>`;
                 }
             } else {
-                bodyHtml += `<td class="empty-cell">-</td><td class="empty-cell">-</td><td class="empty-cell">-</td>`;
+                // 재고 데이터 없는 날짜도 입고는 표시
+                bodyHtml += `<td>${receivingHtml}</td><td class="empty-cell">-</td><td class="empty-cell">-</td>`;
             }
         });
 
@@ -767,7 +806,6 @@ async function fetchStockAndReceiving(userId, userPw) {
         '쿠팡에 로그인하고 있습니다...',
         '광고하지 않는 상품 재고 수집 중...',
         '광고 중인 상품 재고 수집 중...',
-        '입고 데이터 조회 중...',
         '데이터를 분석하고 있습니다...'
     ];
 
@@ -777,12 +815,8 @@ async function fetchStockAndReceiving(userId, userPw) {
         elements.loadingStatus.textContent = loadingMessages[messageIndex];
     }, 5000);
 
-    let stockCount = 0;
-    let receivingCount = 0;
-
     try {
-        // 1. 재고 데이터 조회
-        elements.loadingStatus.textContent = '📦 [1/2] 재고 데이터 조회 중...';
+        elements.loadingStatus.textContent = '📦 재고 데이터 조회 중...';
         const stockResponse = await fetch(`${API_BASE_URL}/api/fetch-stock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -806,33 +840,7 @@ async function fetchStockAndReceiving(userId, userPw) {
         // 재고 데이터 저장
         const today = getTodayString();
         stockHistory[today] = stockResult.data;
-        stockCount = stockResult.count;
-
-        // 2. 입고 데이터 조회
-        elements.loadingStatus.textContent = '📥 [2/2] 입고 데이터 조회 중...';
-        const receivingResponse = await fetch(`${API_BASE_URL}/api/fetch-receiving`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, user_pw: userPw })
-        });
-
-        if (receivingResponse.ok) {
-            const receivingResult = await receivingResponse.json();
-            if (receivingResult.success && receivingResult.data) {
-                // 입고 데이터를 날짜별로 저장 (SKU명: 수량 형태)
-                const todayReceiving = {};
-                if (Array.isArray(receivingResult.data)) {
-                    receivingResult.data.forEach(item => {
-                        if (item.sku_name) {
-                            todayReceiving[item.sku_name] = (todayReceiving[item.sku_name] || 0) + item.quantity;
-                        }
-                    });
-                }
-                receivingHistory[today] = todayReceiving;
-                receivingCount = Object.keys(todayReceiving).length;
-                console.log('입고 데이터:', todayReceiving);
-            }
-        }
+        const stockCount = stockResult.count;
 
         clearInterval(messageInterval);
         saveHistory();
@@ -847,10 +855,7 @@ async function fetchStockAndReceiving(userId, userPw) {
         updateStats();
         showResult();
 
-        showToast(`✅ 재고 수집 완료! 재고 ${stockCount}개, 입고 ${receivingCount}개`, 'success');
-
-        // 매핑 필요 여부 확인
-        checkMappingNeeded();
+        showToast(`✅ 재고 수집 완료! ${stockCount}개 상품`, 'success');
 
     } catch (error) {
         clearInterval(messageInterval);
@@ -897,21 +902,31 @@ async function fetchReceivingDataOnly(userId, userPw) {
             throw new Error(receivingResult.error || '입고 데이터 조회 실패');
         }
 
-        // 입고 데이터 저장
-        const today = getTodayString();
-        const todayReceiving = {};
+        // 입고 데이터 저장 (날짜별 그룹핑)
         let receivingCount = 0;
 
-        if (Array.isArray(receivingResult.data)) {
+        if (receivingResult.data_by_date && typeof receivingResult.data_by_date === 'object') {
+            // 서버에서 날짜별로 그룹핑된 데이터 사용
+            Object.entries(receivingResult.data_by_date).forEach(([date, skuData]) => {
+                receivingHistory[date] = skuData;
+            });
+            receivingCount = Object.keys(receivingResult.data_by_date).reduce((sum, d) => sum + Object.keys(receivingResult.data_by_date[d]).length, 0);
+        } else if (Array.isArray(receivingResult.data)) {
+            // 폴백: date 필드가 있으면 날짜별 그룹핑
+            const dateGrouped = {};
             receivingResult.data.forEach(item => {
                 if (item.sku_name) {
-                    todayReceiving[item.sku_name] = (todayReceiving[item.sku_name] || 0) + item.quantity;
+                    const d = item.date || getTodayString();
+                    if (!dateGrouped[d]) dateGrouped[d] = {};
+                    dateGrouped[d][item.sku_name] = (dateGrouped[d][item.sku_name] || 0) + item.quantity;
                 }
             });
-            receivingCount = Object.keys(todayReceiving).length;
+            Object.entries(dateGrouped).forEach(([date, skuData]) => {
+                receivingHistory[date] = skuData;
+            });
+            receivingCount = receivingResult.data.length;
         }
 
-        receivingHistory[today] = todayReceiving;
         saveHistory();
 
         // UI 업데이트
@@ -930,7 +945,8 @@ async function fetchReceivingDataOnly(userId, userPw) {
         elements.loadingSection.classList.add('hidden');
         elements.resultSection.classList.remove('hidden');
 
-        showToast(`✅ 입고 조회 완료! ${receivingCount}종류 수집됨`, 'success');
+        const dateCount = receivingResult.data_by_date ? Object.keys(receivingResult.data_by_date).length : 1;
+        showToast(`✅ 입고 조회 완료! ${dateCount}일 ${receivingCount}건 수집됨`, 'success');
 
         // 매핑 필요 여부 확인
         checkMappingNeeded();
@@ -962,10 +978,9 @@ async function fetchAllData(userId, userPw) {
 
     const loadingMessages = [
         '쿠팡에 로그인하고 있습니다...',
-        '광고하지 않는 상품 재고 수집 중...',
-        '광고 중인 상품 재고 수집 중...',
-        '입고 데이터 조회 중...',
-        '정산내역 데이터 조회 중...',
+        '재고 데이터 수집 중...',
+        '광고비 데이터 수집 중...',
+        '입고 + 정산 데이터 수집 중...',
         '데이터를 분석하고 있습니다...'
     ];
 
@@ -973,69 +988,183 @@ async function fetchAllData(userId, userPw) {
     const messageInterval = setInterval(() => {
         messageIndex = (messageIndex + 1) % loadingMessages.length;
         elements.loadingStatus.textContent = loadingMessages[messageIndex];
-    }, 5000);
+    }, 8000);
 
     let stockCount = 0;
-    let receivingCount = 0;
     let deductionCount = 0;
+    let adOk = false;
+    let receivingOk = false;
+    const errors = [];
 
     try {
-        // 1. 재고 데이터 조회
+        // [1/3] 재고 데이터 조회
         elements.loadingStatus.textContent = '📦 [1/3] 재고 데이터 조회 중...';
-        const stockResponse = await fetch(`${API_BASE_URL}/api/fetch-stock`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, user_pw: userPw })
-        });
-
-        if (!stockResponse.ok) {
-            throw new Error(`재고 조회 실패: ${stockResponse.status}`);
-        }
-
-        const stockResult = await stockResponse.json();
-
-        if (!stockResult.success) {
-            throw new Error(stockResult.error || '재고 데이터 조회 실패');
-        }
-
-        // 재고 데이터 저장
-        const today = getTodayString();
-        stockHistory[today] = stockResult.data;
-        stockCount = stockResult.count;
-
-        // 2. 입고 데이터 조회
-        elements.loadingStatus.textContent = '📥 [2/3] 입고 데이터 조회 중...';
-        const receivingResponse = await fetch(`${API_BASE_URL}/api/fetch-receiving`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, user_pw: userPw })
-        });
-
-        if (receivingResponse.ok) {
-            const receivingResult = await receivingResponse.json();
-            if (receivingResult.success && receivingResult.data) {
-                // 입고 데이터를 날짜별로 저장 (SKU명: 수량 형태)
-                const todayReceiving = {};
-                if (Array.isArray(receivingResult.data)) {
-                    receivingResult.data.forEach(item => {
-                        todayReceiving[item.sku_name] = (todayReceiving[item.sku_name] || 0) + item.quantity;
-                    });
-                }
-                receivingHistory[today] = todayReceiving;
-                receivingCount = Object.keys(todayReceiving).length;
-                console.log('입고 데이터:', todayReceiving);
+        try {
+            const stockResponse = await fetch(`${API_BASE_URL}/api/fetch-stock`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId, user_pw: userPw })
+            });
+            const stockResult = await stockResponse.json();
+            if (stockResult.success) {
+                const today = getTodayString();
+                stockHistory[today] = stockResult.data;
+                stockCount = stockResult.count;
+            } else {
+                errors.push('재고');
             }
-        }
+        } catch (e) { errors.push('재고'); console.error('재고 수집 오류:', e); }
 
-        // 3. 정산내역 데이터 조회 (스마트 조회: 최근 3일 데이터 갱신)
-        elements.loadingStatus.textContent = '💰 [3/3] 정산내역 데이터 조회 중...';
-        const deductionResult = await fetchDeductionDataWithBuffer(userId, userPw);
-        if (deductionResult.success) {
-            deductionCount = deductionResult.count;
+        // [2/3] 광고비 데이터 조회
+        elements.loadingStatus.textContent = '📊 [2/3] 광고비 데이터 조회 중...';
+        try {
+            const adResponse = await fetch(`${API_BASE_URL}/api/fetch-ad-report`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId, user_pw: userPw, days_back: 7 })
+            });
+            const adResult = await adResponse.json();
+            if (adResult.success && adResult.data_by_date) {
+                for (const [dateStr, dayData] of Object.entries(adResult.data_by_date)) {
+                    // 기존에 products(상세)가 있고 새 데이터에 없으면 유지
+                    const existing = adHistory[dateStr];
+                    if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
+                        dayData.products = existing.products;
+                    }
+                    adHistory[dateStr] = dayData;
+                }
+                adOk = true;
+            } else {
+                errors.push('광고');
+            }
+        } catch (e) { errors.push('광고'); console.error('광고 수집 오류:', e); }
+
+        // [3/3] 입고 + 정산 통합 수집 (supplier.coupang.com 1회 로그인)
+        elements.loadingStatus.textContent = '📥 [3/3] 입고 + 정산 데이터 수집 중... (1회 로그인)';
+        let receivingCount = 0;
+        try {
+            const supplierResponse = await fetch(`${API_BASE_URL}/api/fetch-supplier-all`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userId, user_pw: userPw, days_back: 7 })
+            });
+            const supplierResult = await supplierResponse.json();
+
+            // 입고 결과 처리 (정산과 분리)
+            try {
+                const rec = supplierResult.receiving;
+                if (rec && rec.success) {
+                    if (rec.data_by_date && typeof rec.data_by_date === 'object') {
+                        const dates = Object.keys(rec.data_by_date);
+                        for (const [dateStr, skuData] of Object.entries(rec.data_by_date)) {
+                            receivingHistory[dateStr] = skuData;
+                        }
+                        receivingCount = dates.length;
+                    }
+                    receivingOk = true;
+                } else {
+                    errors.push('입고');
+                }
+            } catch (recErr) {
+                errors.push('입고');
+                console.error('입고 처리 오류:', recErr);
+            }
+
+            // 정산 결과 처리 (입고와 분리)
+            try {
+                const ded = supplierResult.deduction;
+                if (ded && ded.success) {
+                    if (ded.data && ded.data.length > 0) {
+                        // 월별 병합: 새 데이터의 월만 교체, 나머지 월 보존
+                        const newMonths = new Set(ded.data.map(r => r._query_month).filter(Boolean));
+                        const kept = (deductionHistory || []).filter(r => !newMonths.has(r._query_month));
+                        deductionHistory = [...kept, ...ded.data];
+                        deductionCount = deductionHistory.length;
+                        // deductionData도 동기화 (정산내역/손익현황 탭에서 사용)
+                        deductionData = deductionHistory;
+                        deductionHeaders = deductionHistory.length > 0 ? Object.keys(deductionHistory[0]).filter(k => !k.startsWith('_')) : [];
+                        saveDeductionData();
+                    }
+                } else {
+                    errors.push('정산');
+                }
+            } catch (dedErr) {
+                errors.push('정산');
+                console.error('정산 처리 오류:', dedErr);
+            }
+        } catch (e) {
+            console.error('공급자 통합 수집 오류:', e);
+            // 네트워크 중단(ERR_NETWORK_IO_SUSPENDED) 시 캐시에서 복구 시도
+            // 백엔드는 수집 완료 후 Supabase에 이미 저장했을 가능성 높음
+            console.log('네트워크 오류 → 서버 캐시에서 복구 시도...');
+            elements.loadingStatus.textContent = '⏳ 연결 끊김 - 서버 데이터 확인 중...';
+            await new Promise(r => setTimeout(r, 5000));
+
+            let recovered = false;
+            try {
+                // 입고 캐시 로드
+                const cachedRecRes = await fetch(`${API_BASE_URL}/api/cached-receiving`);
+                const cachedRec = await cachedRecRes.json();
+                if (cachedRec.success && cachedRec.data && Object.keys(cachedRec.data).length > 0) {
+                    const beforeCount = Object.keys(receivingHistory).length;
+                    Object.entries(cachedRec.data).forEach(([d, skus]) => {
+                        receivingHistory[d] = skus;
+                    });
+                    const afterCount = Object.keys(receivingHistory).length;
+                    if (afterCount > beforeCount) {
+                        receivingOk = true;
+                        receivingCount = afterCount - beforeCount;
+                        recovered = true;
+                        console.log(`캐시에서 입고 복구: ${receivingCount}일`);
+                    }
+                }
+
+                // 정산 캐시 로드
+                const cachedDedRes = await fetch(`${API_BASE_URL}/api/cached-deduction`);
+                const cachedDed = await cachedDedRes.json();
+                if (cachedDed.success && cachedDed.data && Array.isArray(cachedDed.data) && cachedDed.data.length > 0) {
+                    deductionHistory = cachedDed.data;
+                    deductionCount = cachedDed.count || cachedDed.data.length;
+                    // deductionData도 동기화
+                    deductionData = deductionHistory;
+                    deductionHeaders = deductionHistory.length > 0 ? Object.keys(deductionHistory[0]).filter(k => !k.startsWith('_')) : [];
+                    saveDeductionData();
+                    recovered = true;
+                    console.log(`캐시에서 정산 복구: ${deductionCount}건`);
+                }
+            } catch (cacheErr) {
+                console.error('캐시 복구 실패:', cacheErr);
+            }
+
+            if (!recovered) {
+                errors.push('입고+정산');
+            }
         }
 
         clearInterval(messageInterval);
         saveHistory();
+
+        // 항상 Supabase에서 입고 데이터 보충 확인 (캐시 병합)
+        try {
+            const verifyRes = await fetch(`${API_BASE_URL}/api/cached-receiving`);
+            const verifyData = await verifyRes.json();
+            if (verifyData.success && verifyData.data) {
+                let addedCount = 0;
+                for (const [d, skus] of Object.entries(verifyData.data)) {
+                    if (!receivingHistory[d]) {
+                        receivingHistory[d] = skus;
+                        addedCount++;
+                    }
+                }
+                if (addedCount > 0) {
+                    console.log(`Supabase에서 ${addedCount}일 보충`);
+                    receivingCount += addedCount;
+                    saveHistory();
+                }
+            }
+        } catch (verifyErr) {
+            // Supabase 검증 스킵
+        }
 
         // 오늘 날짜의 월로 설정
         const todayDate = new Date();
@@ -1046,12 +1175,17 @@ async function fetchAllData(userId, userPw) {
         renderPivotTable();
         updateStats();
         renderDeductionTable();
-        updateDeductionStats();
+        if (typeof renderAdTab === 'function') renderAdTab();
         showResult();
 
-        showToast(`✅ 데이터 수집 완료! 재고 ${stockCount}개, 입고 ${receivingCount}개, 정산내역 ${deductionCount}건`, 'success');
+        // 결과 메시지 (입고 건수 포함)
+        const recMsg = receivingCount > 0 ? `, 입고 ${receivingCount}일치` : '';
+        if (errors.length === 0) {
+            showToast(`✅ 전체 수집 완료! 재고 ${stockCount}개${recMsg}, 정산 ${deductionCount}건`, 'success');
+        } else {
+            showToast(`⚠️ 수집 완료 (${errors.join(', ')} 실패) | 재고 ${stockCount}개${recMsg}, 정산 ${deductionCount}건`, 'warning');
+        }
 
-        // 매핑 필요 여부 확인
         checkMappingNeeded();
 
     } catch (error) {
@@ -1412,7 +1546,6 @@ document.addEventListener('click', (e) => {
             if (typeof updateStats === 'function') updateStats();
         } else if (tabName === 'deduction') {
             if (typeof renderDeductionTable === 'function') renderDeductionTable();
-            if (typeof updateDeductionStats === 'function') updateDeductionStats();
         }
     }
 });
@@ -1439,6 +1572,8 @@ async function loadCachedDeductionAndRender() {
         const result = await res.json();
         if (result.success && result.data && result.data.length > 0) {
             deductionData = result.data;
+            deductionHistory = result.data;
+            deductionHeaders = result.data.length > 0 ? Object.keys(result.data[0]).filter(k => !k.startsWith('_')) : [];
             // localStorage에도 저장
             if (typeof saveDeductionData === 'function') saveDeductionData();
             showToast(`정산 데이터 ${deductionData.length}건 로드 완료`, 'success');
@@ -1501,7 +1636,7 @@ document.addEventListener('click', (e) => {
 
 // 전체 탭 렌더링
 function renderRocketTab() {
-    renderEvidenceDateTable();
+    try { renderEvidenceDateTable(); } catch(e) { console.error('증빙일 테이블 렌더 에러:', e); }
     renderIncomeSection();
     renderExpenseSection();
 }
@@ -1538,7 +1673,7 @@ function getDaysInMonth(year, month) {
 }
 
 // ── 유틸: 날짜 포맷 YYYY.M.D ──
-function formatDateShort(year, month, day) {
+function formatDateDot(year, month, day) {
     return `${year}.${month}.${day}`;
 }
 
@@ -1775,10 +1910,10 @@ function renderSettlementDateTable() {
         const hasData = sVal || aVal || iVal || eVal;
 
         html += `<tr${hasData ? '' : ' class="empty-row"'}>
-            <td>${formatDateShort(y, m, d)}</td>
+            <td>${formatDateDot(y, m, d)}</td>
             <td style="text-align:right;${sVal ? ' color:var(--success); font-weight:500;' : ''}">${sVal ? sVal.toLocaleString() : ''}</td>
             <td style="text-align:right;${aVal ? ' color:var(--danger); font-weight:500;' : ''}">${aVal ? aVal.toLocaleString() : ''}</td>
-            <td style="text-align:right;${iVal ? ' color:var(--warning); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
+            <td style="text-align:right;${iVal ? ' color:var(--danger); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
             <td style="text-align:right;${eVal ? ' color:var(--danger); font-weight:500;' : ''}">${eVal ? eVal.toLocaleString() : ''}</td>
         </tr>`;
     }
@@ -1792,7 +1927,7 @@ function renderSettlementDateTable() {
             <td>합계</td>
             <td style="text-align:right; color:var(--success);">${totalSettlement.toLocaleString()}</td>
             <td style="text-align:right; color:var(--danger);">${totalAd.toLocaleString()}</td>
-            <td style="text-align:right; color:var(--warning);">${totalIncome.toLocaleString()}</td>
+            <td style="text-align:right; color:var(--danger);">${totalIncome.toLocaleString()}</td>
             <td style="text-align:right; color:var(--danger);">${totalExpense.toLocaleString()}</td>
         </tr>
         <tr style="font-weight:bold; background:var(--bg-tertiary);">
@@ -1874,9 +2009,9 @@ function renderEvidenceDateTable() {
         html += `<tr${(!hasLeft && !hasRight) ? ' class="empty-row"' : ''}>
             <td style="font-size:0.75rem;">${dateLabel}</td>
             <td style="text-align:right;${eVal ? ' color:var(--success); font-weight:500;' : ''}">${eVal ? eVal.toLocaleString() : ''}</td>
-            <td style="text-align:right;${iVal ? ' color:var(--warning); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
+            <td style="text-align:right;${iVal ? ' color:var(--danger); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
             <td style="text-align:right;${exVal ? ' color:var(--danger); font-weight:500;' : ''}">${exVal ? exVal.toLocaleString() : ''}</td>
-            <td style="border-left:2px solid var(--border-color);">${d <= daysInAdMonth ? formatDateShort(adYear, adMonth, d) : ''}</td>
+            <td style="border-left:2px solid var(--border-color);">${d <= daysInAdMonth ? formatDateDot(adYear, adMonth, d) : ''}</td>
             <td style="text-align:right;${aVal ? ' color:var(--danger); font-weight:500;' : ''}">${aVal ? aVal.toLocaleString() : ''}</td>
         </tr>`;
     }
@@ -1889,7 +2024,7 @@ function renderEvidenceDateTable() {
         <tr style="font-weight:bold; border-top:2px solid var(--primary);">
             <td>합계</td>
             <td style="text-align:right; color:var(--success);">${totalEvidence.toLocaleString()}</td>
-            <td style="text-align:right; color:var(--warning);">${totalIncome.toLocaleString()}</td>
+            <td style="text-align:right; color:var(--danger);">${totalIncome.toLocaleString()}</td>
             <td style="text-align:right; color:var(--danger);">${totalExpense.toLocaleString()}</td>
             <td style="border-left:2px solid var(--border-color);">합계</td>
             <td style="text-align:right; color:var(--danger);">${totalAd.toLocaleString()}</td>
@@ -2066,7 +2201,10 @@ document.addEventListener('click', async (e) => {
                         newCount++;
                     }
                 });
+                deductionHistory = deductionData;
+                deductionHeaders = deductionData.length > 0 ? Object.keys(deductionData[0]).filter(k => !k.startsWith('_')) : [];
                 if (typeof saveDeductionData === 'function') saveDeductionData();
+                renderDeductionTable();
                 renderRocketTab();
                 showToast(`전체 수집 완료! 신규 ${newCount}건 추가 (총 ${deductionData.length}건)`, 'success');
             } else {
@@ -2104,6 +2242,126 @@ document.addEventListener('click', (e) => {
         if (marginElements.addItemModal) {
             marginElements.addItemModal.classList.add('hidden');
         }
+    }
+});
+
+// ── 한 줄 파싱 입력 ──
+function parseQuickInput(text) {
+    text = text.trim();
+    if (!text) return null;
+
+    let date = new Date().toISOString().split('T')[0];
+    let remaining = text;
+
+    // 날짜 파싱: 맨 앞의 "어제", "그제", "M/D", "M월D일"
+    const datePatterns = [
+        { regex: /^어제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 1); return d; }},
+        { regex: /^그제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 2); return d; }},
+        { regex: /^(\d{1,2})\/(\d{1,2})\s+/, fn: (m) => new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]))},
+        { regex: /^(\d{1,2})월\s*(\d{1,2})일?\s+/, fn: (m) => new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]))},
+    ];
+
+    for (const p of datePatterns) {
+        const match = remaining.match(p.regex);
+        if (match) {
+            const d = p.fn(match);
+            date = d.toISOString().split('T')[0];
+            remaining = remaining.replace(match[0], '');
+            break;
+        }
+    }
+
+    // 금액 파싱: 맨 뒤의 숫자+단위 (만, 천, 원)
+    // "3만원", "2만5천원", "15000", "10만", "5천원", "2만5천"
+    const amountRegex = /(\d+만\s*\d*천?\s*\d*원?|\d+천\s*\d*원?|\d+원|\d+)\s*$/;
+    const amountMatch = remaining.match(amountRegex);
+    if (!amountMatch) return null;
+
+    const amountStr = amountMatch[1].replace(/\s/g, '');
+    let amount = 0;
+
+    const manMatch = amountStr.match(/(\d+)만/);
+    const cheonMatch = amountStr.match(/(\d+)천/);
+    const plainMatch = amountStr.replace(/만|천|원/g, '').match(/\d+$/);
+
+    if (manMatch) amount += parseInt(manMatch[1]) * 10000;
+    if (cheonMatch) amount += parseInt(cheonMatch[1]) * 1000;
+    if (!manMatch && !cheonMatch && plainMatch) {
+        amount = parseInt(plainMatch[0]);
+    } else if ((manMatch || cheonMatch) && plainMatch && plainMatch[0] !== (manMatch?.[1] || '') && plainMatch[0] !== (cheonMatch?.[1] || '')) {
+        // "2만5천500" 같은 경우 남은 숫자 처리
+        const leftover = parseInt(plainMatch[0]);
+        if (leftover < 1000) amount += leftover;
+    }
+
+    if (amount <= 0) return null;
+
+    // 내역: 금액 부분 제거 후 남은 텍스트
+    const description = remaining.replace(amountRegex, '').trim();
+    if (!description) return null;
+
+    return { date, description, amount };
+}
+
+// 빠른 입력 처리 함수
+function handleQuickAdd(inputEl, mode) {
+    const parsed = parseQuickInput(inputEl.value);
+    if (!parsed) {
+        showToast('입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
+        return;
+    }
+
+    const { date, description, amount } = parsed;
+
+    if (mode === 'expense') {
+        if (!expenseData[date]) expenseData[date] = [];
+        expenseData[date].push({ description, amount: -amount, note: '' });
+    } else {
+        if (!marginData[date]) marginData[date] = [];
+        marginData[date].push({ type: '매입', description, amount: -amount });
+    }
+
+    // 현재 보고 있는 월과 동기화
+    const addedMonth = parseInt(date.split('-')[1]);
+    const addedYear = parseInt(date.split('-')[0]);
+    marginYear = addedYear;
+    marginMonth = addedMonth;
+
+    saveMarginData();
+    renderRocketTab();
+    inputEl.value = '';
+    showToast(`${description} ${amount.toLocaleString()}원 추가 (${date})`, 'success');
+
+    // 추가 버튼 효과
+    const btn = inputEl.closest('.quick-input-bar')?.querySelector('.quick-add-btn');
+    if (btn) successPop(btn);
+}
+
+function successPop(btn) {
+    const orig = btn.textContent;
+    btn.textContent = '\u2713';
+    btn.classList.add('pop-success');
+    setTimeout(() => {
+        btn.textContent = orig;
+        btn.classList.remove('pop-success');
+    }, 600);
+}
+
+// 빠른 입력 이벤트: Enter 키
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.classList.contains('quick-input')) {
+        e.preventDefault();
+        handleQuickAdd(e.target, e.target.dataset.mode);
+    }
+});
+
+// 빠른 입력 이벤트: 추가 버튼 클릭
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.quick-add-btn');
+    if (btn) {
+        const bar = btn.closest('.quick-input-bar');
+        const inputEl = bar?.querySelector('.quick-input');
+        if (inputEl) handleQuickAdd(inputEl, inputEl.dataset.mode);
     }
 });
 
@@ -2154,15 +2412,17 @@ document.addEventListener('click', (e) => {
         if (marginElements.itemAmount) marginElements.itemAmount.value = '';
 
         showToast(mode === 'expense' ? '비용이 추가되었습니다.' : '항목이 추가되었습니다.', 'success');
+        successPop(e.target);
     }
 });
 
 // 항목 삭제 (수입/비용 구분)
 document.addEventListener('click', (e) => {
-    if (e.target.classList.contains('delete-btn')) {
-        const date = e.target.dataset.date;
-        const index = parseInt(e.target.dataset.index);
-        const type = e.target.dataset.type;
+    const delBtn = e.target.closest('.delete-btn');
+    if (delBtn) {
+        const date = delBtn.dataset.date;
+        const index = parseInt(delBtn.dataset.index);
+        const type = delBtn.dataset.type;
 
         if (type === 'expense') {
             if (expenseData[date] && expenseData[date][index]) {
@@ -2221,12 +2481,19 @@ function getDashToday() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// 대시보드 날짜 입력값 초기화 (기본: 오늘)
+function getDashYesterday() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// 대시보드 날짜 입력값 초기화 (기본: 어제)
 function initDashDates() {
     const startInput = document.getElementById('dashStartDate');
     const endInput = document.getElementById('dashEndDate');
-    if (startInput && !startInput.value) startInput.value = getDashToday();
-    if (endInput && !endInput.value) endInput.value = getDashToday();
+    const yesterday = getDashYesterday();
+    if (startInput && !startInput.value) startInput.value = yesterday;
+    if (endInput && !endInput.value) endInput.value = yesterday;
 }
 
 // 날짜 변경 시 자동 렌더링 (수동 날짜 선택 시 버튼 활성화 해제)
@@ -2312,7 +2579,24 @@ function renderDashboard() {
 
     // 상품명 정규화 (공백/특수문자 차이로 인한 중복 방지)
     function normalizeProductName(name) {
-        return name.replace(/\s+/g, ' ').trim();
+        // 광고 상품명에 붙는 "\nID : 숫자" 제거
+        return name.replace(/\nID\s*:\s*\d+/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    // 광고 상품명 → 재고 상품명 매칭 (부분 문자열 매칭)
+    function findMatchingProductKey(adName, productMap) {
+        // 1) 정확히 일치
+        if (productMap[adName]) return adName;
+
+        // 2) 한쪽이 다른 쪽을 포함하는 경우
+        const keys = Object.keys(productMap);
+        for (const key of keys) {
+            if (key.includes(adName) || adName.includes(key)) {
+                return key;
+            }
+        }
+
+        return null; // 매칭 실패 → 새 항목 생성
     }
 
     // 모든 상품 수집 (범위 내 날짜에서만)
@@ -2389,6 +2673,12 @@ function renderDashboard() {
                 name = productMapping[name];
             }
             name = normalizeProductName(name);
+
+            // 기존 재고 상품과 매칭 시도 (부분 문자열 포함)
+            const matchedKey = findMatchingProductKey(name, productMap);
+            if (matchedKey) {
+                name = matchedKey;
+            }
 
             if (!productMap[name]) {
                 productMap[name] = {
@@ -2563,11 +2853,16 @@ function renderDeductionTable() {
     const selectedYear = yearFilter ? yearFilter.value : null;
     const selectedMonth = monthFilter ? monthFilter.value : null;
 
+    // 빈 행 제거 (증빙일, 정산일, 계산서 번호 모두 비어있으면 제외)
+    const validData = deductionData.filter(row => {
+        return (row['증빙일'] || row['매출발생일'] || row['정산일'] || row['계산서 번호'] || '').trim() !== '';
+    });
+
     // 필터링된 데이터 (증빙일 기준)
-    let filteredData = deductionData;
+    let filteredData = validData;
     if (selectedYear && selectedMonth) {
         const filterKey = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-        filteredData = deductionData.filter(row => {
+        filteredData = validData.filter(row => {
             // 증빙일 컬럼을 우선 사용
             const dateCol = row['증빙일'] || row['매출발생일'] || row['정산일'] || '';
             return dateCol.startsWith(filterKey);
@@ -2731,25 +3026,13 @@ function getRowKey(row) {
 async function fetchDeductionDataWithBuffer(userId, userPw) {
     let startYear = 2025;
     let startMonth = 11;
-    let isFullFetch = true;
-    let thresholdStr = '';
 
     if (deductionData.length > 0) {
         try {
-            const todayDate = new Date();
-            const thresholdDate = new Date();
-            thresholdDate.setDate(todayDate.getDate() - 4);
-            thresholdStr = thresholdDate.toISOString().split('T')[0];
-
-            // 5일 전(thresholdStr) 이전 데이터만 남기기 (누적 보존)
-            deductionData = deductionData.filter(row => {
-                const dateVal = row['증빙일'] || row['매출발생일'] || row['정산일'] || '';
-                return dateVal < thresholdStr;
-            });
-
-            startYear = thresholdDate.getFullYear();
-            startMonth = thresholdDate.getMonth() + 1;
-            isFullFetch = false;
+            const bufferDate = new Date();
+            bufferDate.setDate(bufferDate.getDate() - 4);
+            startYear = bufferDate.getFullYear();
+            startMonth = bufferDate.getMonth() + 1;
         } catch (e) {
             console.error("정산 조회 계산 오류:", e);
         }
@@ -2770,31 +3053,20 @@ async function fetchDeductionDataWithBuffer(userId, userPw) {
         if (response.ok) {
             const result = await response.json();
             if (result.success && result.data) {
-                const existingKeys = new Set(deductionData.map(getRowKey));
-                let newCount = 0;
+                // 월별 병합: 새로 수집한 월의 데이터는 전체 교체, 나머지 월 보존
+                const newMonths = new Set(result.data.map(r => r._query_month).filter(Boolean));
+                const kept = deductionData.filter(r => !newMonths.has(r._query_month || ''));
+                const newCount = result.data.length;
+
+                deductionData = [...kept, ...result.data];
 
                 if (result.data.length > 0) {
-                    const firstRow = result.data[0];
-                    deductionHeaders = Object.keys(firstRow).filter(k => !k.startsWith('_'));
+                    deductionHeaders = Object.keys(result.data[0]).filter(k => !k.startsWith('_'));
                 }
 
-                result.data.forEach(row => {
-                    const dataRow = { ...row };
-                    const dateVal = dataRow['증빙일'] || dataRow['매출발생일'] || dataRow['정산일'] || '';
-
-                    if (isFullFetch || dateVal >= thresholdStr) {
-                        const key = getRowKey(dataRow);
-                        if (!existingKeys.has(key)) {
-                            deductionData.push(dataRow);
-                            existingKeys.add(key);
-                            newCount++;
-                        }
-                    }
-                });
-
+                deductionHistory = deductionData;
                 saveDeductionData();
                 renderDeductionTable();
-                updateDeductionStats();
                 if (typeof renderRocketTab === 'function') renderRocketTab();
 
                 return { success: true, count: newCount, total: deductionData.length };
@@ -2847,54 +3119,13 @@ document.addEventListener('click', async (e) => {
             return;
         }
 
-        // 스마트 조회: 최근 3일(오늘 포함) 데이터만 최신화하고 이전 데이터는 누적 보존
-        let startYear = 2025;
-        let startMonth = 11;
-        let isFullFetch = true;
-        let thresholdStr = '';
-
-        if (deductionData.length > 0) {
-            try {
-                const today = new Date();
-                const thresholdDate = new Date();
-                thresholdDate.setDate(today.getDate() - 2); // 예: 오늘이 1/2이면 12/31, 1/1, 1/2 업데이트
-                thresholdStr = thresholdDate.toISOString().split('T')[0];
-
-                const initialCount = deductionData.length;
-                // 3일 전(thresholdStr) 이전 데이터만 남기기 (누적 보존)
-                deductionData = deductionData.filter(row => {
-                    const dateVal = row['증빙일'] || row['매출발생일'] || row['정산일'] || '';
-                    return dateVal < thresholdStr;
-                });
-                const deletedCount = initialCount - deductionData.length;
-
-                if (deletedCount > 0) {
-                    console.log(`스마트 조회: ${thresholdStr} 이후 데이터 ${deletedCount}건 갱신 준비 (이전 데이터 보존)`);
-                }
-
-                // 조회 시작 월 (3일 전이 포함된 달부터)
-                startYear = thresholdDate.getFullYear();
-                startMonth = thresholdDate.getMonth() + 1;
-                isFullFetch = false;
-
-            } catch (e) {
-                console.error("스마트 조회 계산 중 오류:", e);
-                startYear = 2025;
-                startMonth = 11;
-                isFullFetch = true;
-            }
-        }
-
-        const msg = isFullFetch
-            ? '정산내역 데이터 조회 중... (2025년 11월부터 현재까지)'
-            : `정산내역 업데이트 중... (${startYear}년 ${startMonth}월부터 최신 3일 데이터 갱신)`;
-        showToast(msg, 'info');
+        showToast('정산내역 데이터 조회 중... (월별 병합 방식)', 'info');
 
         try {
             const result = await fetchDeductionDataWithBuffer(userId, userPw);
             if (result.success) {
                 if (result.count > 0) {
-                    showToast(`새 데이터 ${result.count}건 추가! (총 ${result.total}건)`, 'success');
+                    showToast(`정산 데이터 ${result.count}건 갱신 완료! (총 ${result.total}건)`, 'success');
                 } else {
                     showToast('새로운 데이터가 없습니다.', 'info');
                 }
@@ -2913,10 +3144,10 @@ document.addEventListener('click', (e) => {
     if (e.target.id === 'clearDeductionBtn' || e.target.closest('#clearDeductionBtn')) {
         if (confirm('정산내역 데이터를 모두 삭제하시겠습니까?')) {
             deductionData = [];
+            deductionHistory = [];
             deductionHeaders = [];
             localStorage.removeItem(DEDUCTION_STORAGE_KEY);
             renderDeductionTable();
-            updateDeductionStats();
             showToast('정산내역 데이터가 초기화되었습니다.', 'success');
         }
     }
@@ -3201,28 +3432,30 @@ async function fetchAdDataOnly(userId, userPw) {
         const response = await fetch(`${API_BASE_URL}/api/fetch-ad-report`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, user_pw: userPw })
+            body: JSON.stringify({ user_id: userId, user_pw: userPw, days_back: 7 })
         });
 
         if (response.ok) {
             const result = await response.json();
-            if (result.success && result.data) {
-                // 어제 날짜 기준 저장
-                const yesterday = new Date();
-                yesterday.setDate(yesterday.getDate() - 1);
-                const year = yesterday.getFullYear();
-                const month = String(yesterday.getMonth() + 1).padStart(2, '0');
-                const day = String(yesterday.getDate()).padStart(2, '0');
-                const yesterdayStr = `${year}-${month}-${day}`;
-
-                adHistory[yesterdayStr] = result.data;
+            if (result.success && result.data_by_date) {
+                const dates = Object.keys(result.data_by_date);
+                for (const [dateStr, dayData] of Object.entries(result.data_by_date)) {
+                    // 기존에 products(상세)가 있고 새 데이터에 없으면 유지
+                    const existing = adHistory[dateStr];
+                    if (existing && existing.products && existing.products.length > 0 && (!dayData.products || dayData.products.length === 0)) {
+                        dayData.products = existing.products;
+                    }
+                    adHistory[dateStr] = dayData;
+                }
                 saveHistory();
 
                 // 현재 탭이 광고탭이면 업데이트
-                currentAdDate = yesterday; // 수집된 날짜(어제)로 이동
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                currentAdDate = yesterday;
                 renderAdTab();
 
-                showToast(`✅ 광고비 데이터 수집 완료! (${yesterdayStr})`, 'success');
+                showToast(`✅ 광고비 데이터 수집 완료! (${dates.length}일치)`, 'success');
             } else {
                 showError(result.error || '광고 데이터 수집 실패');
             }
@@ -3234,6 +3467,12 @@ async function fetchAdDataOnly(userId, userPw) {
         showError('광고 수집 중 오류가 발생했습니다.');
     } finally {
         showResult();
+        // 피벗 테이블이 보이는 상태면 다시 렌더링 (입고 데이터 유지)
+        const activeTab = document.querySelector('.tab-content.active');
+        if (activeTab && activeTab.id === 'stockTab') {
+            renderPivotTable();
+            updateStats();
+        }
     }
 }
 
@@ -3264,6 +3503,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (typeof renderPivotTable === 'function') renderPivotTable();
                 if (typeof updateStats === 'function') updateStats();
             }
+            // 정산내역 탭도 갱신
+            if (typeof renderDeductionTable === 'function') renderDeductionTable();
             showToast(`서버에서 데이터 ${loaded}종 로드 완료`, 'success');
         }
     }).catch(e => console.log('서버 캐시 로드 실패 (오프라인 모드):', e));
