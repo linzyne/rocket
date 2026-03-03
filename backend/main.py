@@ -568,6 +568,36 @@ async def get_cached_ad():
         return {"success": False, "data": {}, "error": str(e)}
 
 
+# ── 수입/비용 데이터 저장/조회 ──
+
+@app.get("/api/cached-margin")
+async def get_cached_margin():
+    """저장된 수입(사입비) + 비용 데이터를 반환합니다."""
+    try:
+        from db import load_data
+        margin = load_data("margin_data") or {}
+        expense = load_data("expense_data") or {}
+        return {"success": True, "marginData": margin, "expenseData": expense}
+    except Exception as e:
+        print(f"⚠️ 수입/비용 캐시 로드 실패: {e}")
+        return {"success": False, "marginData": {}, "expenseData": {}, "error": str(e)}
+
+
+@app.post("/api/save-margin")
+async def save_margin(data: dict):
+    """수입(사입비) + 비용 데이터를 저장합니다."""
+    try:
+        from db import save_data
+        if "marginData" in data:
+            save_data("margin_data", data["marginData"])
+        if "expenseData" in data:
+            save_data("expense_data", data["expenseData"])
+        return {"success": True}
+    except Exception as e:
+        print(f"⚠️ 수입/비용 저장 실패: {e}")
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000)

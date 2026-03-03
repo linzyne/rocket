@@ -200,9 +200,15 @@ async function loadAllCachedData() {
     return loaded;
 }
 
+function toLocalDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 function getTodayString() {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
+    return toLocalDateStr(new Date());
 }
 
 // ========================================
@@ -1497,32 +1503,68 @@ const marginElements = {
     get itemAmount() { return document.getElementById('itemAmount'); }
 };
 
-// 마진 데이터 로드
-function loadMarginData() {
+// 마진 데이터 로드 (서버 → localStorage 병합)
+async function loadMarginData() {
+    // 1. localStorage에서 먼저 로드 (즉시 표시용)
     try {
         const saved = localStorage.getItem(MARGIN_STORAGE_KEY);
-        if (saved) {
-            marginData = JSON.parse(saved);
-        }
+        if (saved) marginData = JSON.parse(saved);
         const savedExpense = localStorage.getItem(EXPENSE_STORAGE_KEY);
-        if (savedExpense) {
-            expenseData = JSON.parse(savedExpense);
+        if (savedExpense) expenseData = JSON.parse(savedExpense);
+    } catch (e) {
+        console.error('로컬 마진 데이터 로드 실패:', e);
+    }
+
+    // 2. 서버에서 로드 후 병합
+    try {
+        const res = await fetch(`${REMOTE_API}/api/cached-margin`);
+        const json = await res.json();
+        if (json.success) {
+            marginData = mergeMarginData(marginData, json.marginData || {});
+            expenseData = mergeMarginData(expenseData, json.expenseData || {});
+            // 병합 결과를 localStorage에도 저장
+            localStorage.setItem(MARGIN_STORAGE_KEY, JSON.stringify(marginData));
+            localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(expenseData));
         }
     } catch (e) {
-        console.error('마진 데이터 로드 실패:', e);
-        marginData = {};
-        expenseData = {};
+        console.warn('서버 마진 데이터 로드 실패 (로컬 데이터 사용):', e);
     }
 }
 
-// 마진 데이터 저장
+// 날짜별 항목 병합 (중복 제거)
+function mergeMarginData(local, remote) {
+    const merged = { ...local };
+    for (const date in remote) {
+        if (!merged[date]) {
+            merged[date] = remote[date];
+        } else {
+            // 같은 날짜의 항목은 내용+금액이 같으면 중복으로 판단
+            const existing = merged[date];
+            for (const item of remote[date]) {
+                const isDup = existing.some(e =>
+                    e.description === item.description && e.amount === item.amount
+                );
+                if (!isDup) existing.push(item);
+            }
+        }
+    }
+    return merged;
+}
+
+// 마진 데이터 저장 (localStorage + 서버)
 function saveMarginData() {
     try {
         localStorage.setItem(MARGIN_STORAGE_KEY, JSON.stringify(marginData));
         localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(expenseData));
     } catch (e) {
-        console.error('마진 데이터 저장 실패:', e);
+        console.error('로컬 마진 데이터 저장 실패:', e);
     }
+    // 서버에도 저장 (비동기, 실패해도 무시)
+    fetch(`${REMOTE_API}/api/save-margin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marginData, expenseData })
+    }).catch(e => console.warn('서버 마진 데이터 저장 실패:', e));
 }
 
 // 탭 전환
@@ -2239,7 +2281,7 @@ document.addEventListener('click', (e) => {
             marginElements.addItemModal.dataset.mode = 'income';
             marginElements.addItemModal.classList.remove('hidden');
             if (marginElements.itemDate) {
-                marginElements.itemDate.value = new Date().toISOString().split('T')[0];
+                marginElements.itemDate.value = toLocalDateStr(new Date());
             }
             const modalTitle = marginElements.addItemModal.querySelector('h3');
             if (modalTitle) modalTitle.textContent = '항목 추가';
@@ -2257,13 +2299,6 @@ document.addEventListener('click', (e) => {
 });
 
 // ── 한 줄 파싱 입력 ──
-function toLocalDateStr(d) {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-}
-
 // 다양한 날짜 문자열을 Date 객체로 변환
 function parseDateStr(str) {
     str = str.trim();
@@ -2568,7 +2603,7 @@ document.addEventListener('click', (e) => {
             marginElements.addItemModal.dataset.mode = 'expense';
             marginElements.addItemModal.classList.remove('hidden');
             if (marginElements.itemDate) {
-                marginElements.itemDate.value = new Date().toISOString().split('T')[0];
+                marginElements.itemDate.value = toLocalDateStr(new Date());
             }
             // 모달 제목 변경
             const modalTitle = marginElements.addItemModal.querySelector('h3');
@@ -2577,8 +2612,10 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// 마진 데이터 초기 로드
-loadMarginData();
+// 마진 데이터 초기 로드 (서버 병합 후 다시 렌더링)
+loadMarginData().then(() => {
+    renderRocketTab();
+});
 console.log('🚀 로켓발주 기능 로드 완료');
 
 
@@ -3563,8 +3600,8 @@ async function fetchAdDataOnly(userId, userPw) {
                             const cacheRes = await fetch(`${API_BASE_URL}/api/cached-ad`);
                             const cacheData = await cacheRes.json();
                             if (cacheData.success && cacheData.data) {
-                                const today = new Date().toISOString().split('T')[0];
-                                const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                                const today = toLocalDateStr(new Date());
+                                const yesterday = toLocalDateStr(new Date(Date.now() - 86400000));
                                 // 어제 데이터가 새로 들어왔는지 확인
                                 if (cacheData.data[yesterday] || cacheData.data[today]) {
                                     clearInterval(pollInterval);
