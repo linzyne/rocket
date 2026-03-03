@@ -379,6 +379,9 @@
                                 <span class="period-label margin-period-label"></span>
                                 <button class="btn btn-icon margin-next-month">▶</button>
                             </div>
+                            <button class="btn btn-outline btn-sm" id="manageCategoryBtn" style="font-size:0.75rem;">
+                                <span>⚙️</span> 카테고리
+                            </button>
                             <button class="btn btn-outline btn-sm" id="addExpenseBtn">
                                 <span>➕</span> 비용 추가
                             </button>
@@ -393,6 +396,7 @@
                             <thead>
                                 <tr>
                                     <th>날짜</th>
+                                    <th>카테고리</th>
                                     <th>내역</th>
                                     <th style="text-align:right;">금액</th>
                                     <th>비고</th>
@@ -401,13 +405,13 @@
                             </thead>
                             <tbody id="rocketExpenseBody">
                                 <tr>
-                                    <td colspan="5" style="text-align:center; padding:20px; color:var(--text-muted);">
+                                    <td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">
                                         비용을 추가해주세요</td>
                                 </tr>
                             </tbody>
                             <tfoot>
                                 <tr style="font-weight:bold; border-top:2px solid var(--primary);">
-                                    <td colspan="2">합계</td>
+                                    <td colspan="3">합계</td>
                                     <td style="text-align:right;" id="rocketExpenseSum">0원</td>
                                     <td colspan="2"></td>
                                 </tr>
@@ -469,6 +473,23 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="cancelAddItem">취소</button>
                 <button class="btn btn-primary" id="confirmAddItem">추가</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 카테고리 관리 모달 -->
+    <div class="modal hidden" id="categoryManageModal">
+        <div class="modal-content" style="max-width:380px;">
+            <div class="modal-header">
+                <h3>⚙️ 비용 카테고리 관리</h3>
+                <button class="close-btn" id="closeCategoryModal">&times;</button>
+            </div>
+            <div class="modal-body" style="padding:var(--spacing-md);">
+                <div id="categoryList"></div>
+                <div style="display:flex; gap:8px; margin-top:var(--spacing-md);">
+                    <input type="text" id="newCategoryInput" class="form-input" placeholder="새 카테고리 이름" style="flex:1;">
+                    <button class="btn btn-primary btn-sm" id="addCategoryBtn">추가</button>
+                </div>
             </div>
         </div>
     </div>

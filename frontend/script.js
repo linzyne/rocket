@@ -1484,8 +1484,11 @@ console.log('🚀 쿠팡 재고 대시보드 복구 완료 (입고/재고/판매
 // ========================================
 const MARGIN_STORAGE_KEY = 'coupang_margin_data';
 const EXPENSE_STORAGE_KEY = 'coupang_expense_data';
+const CATEGORY_STORAGE_KEY = 'coupang_expense_categories';
+const DEFAULT_CATEGORIES = ['임대료', '택배비', '통신비', '식대', '마케팅', '대출상환금', '세금', '재료비', '기타 비용'];
 let marginData = {};  // 날짜별 수입(사입비) 데이터 { "2026-02-08": [{description, amount}] }
-let expenseData = {}; // 날짜별 비용 데이터 { "2026-02-08": [{description, amount, note}] }
+let expenseData = {}; // 날짜별 비용 데이터 { "2026-02-08": [{description, amount, note, category}] }
+let expenseCategories = [...DEFAULT_CATEGORIES];
 let marginYear = new Date().getFullYear();
 let marginMonth = new Date().getMonth() + 1;
 // 증빙일 기준 표 전용 월 (독립적으로 변경 가능)
@@ -1511,6 +1514,8 @@ async function loadMarginData() {
         if (saved) marginData = JSON.parse(saved);
         const savedExpense = localStorage.getItem(EXPENSE_STORAGE_KEY);
         if (savedExpense) expenseData = JSON.parse(savedExpense);
+        const savedCat = localStorage.getItem(CATEGORY_STORAGE_KEY);
+        if (savedCat) expenseCategories = JSON.parse(savedCat);
     } catch (e) {
         console.error('로컬 마진 데이터 로드 실패:', e);
     }
@@ -1522,9 +1527,13 @@ async function loadMarginData() {
         if (json.success) {
             marginData = mergeMarginData(marginData, json.marginData || {});
             expenseData = mergeMarginData(expenseData, json.expenseData || {});
+            if (json.expenseCategories && json.expenseCategories.length > 0) {
+                expenseCategories = json.expenseCategories;
+            }
             // 병합 결과를 localStorage에도 저장
             localStorage.setItem(MARGIN_STORAGE_KEY, JSON.stringify(marginData));
             localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(expenseData));
+            localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(expenseCategories));
         }
     } catch (e) {
         console.warn('서버 마진 데이터 로드 실패 (로컬 데이터 사용):', e);
@@ -1556,6 +1565,7 @@ function saveMarginData() {
     try {
         localStorage.setItem(MARGIN_STORAGE_KEY, JSON.stringify(marginData));
         localStorage.setItem(EXPENSE_STORAGE_KEY, JSON.stringify(expenseData));
+        localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(expenseCategories));
     } catch (e) {
         console.error('로컬 마진 데이터 저장 실패:', e);
     }
@@ -1563,7 +1573,7 @@ function saveMarginData() {
     fetch(`${REMOTE_API}/api/save-margin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ marginData, expenseData })
+        body: JSON.stringify({ marginData, expenseData, expenseCategories })
     }).catch(e => console.warn('서버 마진 데이터 저장 실패:', e));
 }
 
@@ -1943,7 +1953,7 @@ function buildDetailMap_expense(year, month) {
             if (day > 0) {
                 if (!map[day]) map[day] = [];
                 expenseData[date].forEach(item => {
-                    map[day].push({ desc: item.description || '(내역없음)', amount: item.amount, note: item.note || '' });
+                    map[day].push({ desc: item.description || '(내역없음)', amount: item.amount, note: item.note || '', category: item.category || '기타 비용' });
                 });
             }
         }
@@ -2277,7 +2287,7 @@ function renderEvidenceDateTable() {
 
         // 비용 상세 툴팁
         const exDetails = expenseDetailMap[d] || [];
-        const exTooltip = exDetails.length > 0 ? ` class="has-tooltip" data-tooltip="${escapeAttr(exDetails.map(it => `${it.desc}: ${Math.abs(it.amount).toLocaleString()}원${it.note ? ' (' + it.note + ')' : ''}`).join('\n'))}"` : '';
+        const exTooltip = exDetails.length > 0 ? ` class="has-tooltip" data-tooltip="${escapeAttr(exDetails.map(it => `[${it.category}] ${it.desc}: ${Math.abs(it.amount).toLocaleString()}원${it.note ? ' (' + it.note + ')' : ''}`).join('\n'))}"` : '';
 
         html += `<tr${(!hasLeft && !hasRight) ? ' class="empty-row"' : ''}>
             <td style="font-size:0.75rem; ${bd}">${dateLabel}</td>
@@ -2363,7 +2373,7 @@ function renderExpenseSection() {
             expenseData[date].forEach((item, index) => {
                 const amount = Math.abs(item.amount);
                 total += amount;
-                allItems.push({ date, description: item.description, amount, note: item.note || '', index });
+                allItems.push({ date, description: item.description, amount, note: item.note || '', category: item.category || '기타 비용', index });
             });
         }
     });
@@ -2371,12 +2381,13 @@ function renderExpenseSection() {
     allItems.sort((a, b) => a.date.localeCompare(b.date));
 
     if (allItems.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text-muted);">비용을 추가해주세요</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">비용을 추가해주세요</td></tr>';
     } else {
         let html = '';
         allItems.forEach(item => {
             html += `<tr>
                 <td>${item.date}</td>
+                <td><span class="category-badge">${escapeHtml(item.category)}</span></td>
                 <td>${escapeHtml(item.description || '-')}</td>
                 <td style="text-align:right; color:var(--danger);">-${item.amount.toLocaleString()}원</td>
                 <td>${escapeHtml(item.note)}</td>
@@ -2505,6 +2516,9 @@ document.addEventListener('click', (e) => {
             }
             const modalTitle = marginElements.addItemModal.querySelector('h3');
             if (modalTitle) modalTitle.textContent = '항목 추가';
+            // 수입 모드에서는 카테고리 숨기기
+            const catSel = document.getElementById('expenseCategorySelect');
+            if (catSel) catSel.classList.add('hidden');
         }
     }
 });
@@ -2644,10 +2658,19 @@ function parseQuickInput(text) {
     if (amount <= 0) return null;
 
     // 내역: 금액 부분 제거 후 남은 텍스트
-    const description = remaining.replace(usedPattern, '').trim();
-    if (!description) return null;
+    const rawDesc = remaining.replace(usedPattern, '').trim();
+    if (!rawDesc) return null;
 
-    return { date, description, amount };
+    // 카테고리 파싱: "카테고리>내역" 형식
+    let category = null;
+    let description = rawDesc;
+    if (rawDesc.includes('>')) {
+        const idx = rawDesc.indexOf('>');
+        category = rawDesc.substring(0, idx).trim();
+        description = rawDesc.substring(idx + 1).trim() || category;
+    }
+
+    return { date, description, amount, category };
 }
 
 // 빠른 입력 처리 함수 (여러 줄 지원)
@@ -2669,11 +2692,11 @@ function handleQuickAdd(inputEl, mode) {
         const parsed = parseQuickInput(line);
         if (!parsed) { failCount++; continue; }
 
-        const { date, description, amount } = parsed;
+        const { date, description, amount, category } = parsed;
 
         if (mode === 'expense') {
             if (!expenseData[date]) expenseData[date] = [];
-            expenseData[date].push({ description, amount: -amount, note: '' });
+            expenseData[date].push({ description, amount: -amount, note: '', category: category || '기타 비용' });
         } else {
             if (!marginData[date]) marginData[date] = [];
             marginData[date].push({ type: '매입', description, amount: -amount });
@@ -2747,6 +2770,9 @@ document.addEventListener('click', (e) => {
         const description = marginElements.itemDescription?.value;
         const amount = parseInt(marginElements.itemAmount?.value) || 0;
         const mode = marginElements.addItemModal?.dataset.mode || 'income';
+        const note = document.getElementById('itemNote')?.value || '';
+        const categorySel = document.getElementById('expenseCategorySelect');
+        const category = categorySel ? categorySel.value : '기타 비용';
 
         if (!date || !description || amount <= 0) {
             showToast('모든 항목을 입력해주세요.', 'error');
@@ -2761,7 +2787,8 @@ document.addEventListener('click', (e) => {
             expenseData[date].push({
                 description: description,
                 amount: -amount,
-                note: ''
+                note: note,
+                category: category
             });
         } else {
             // 수입(사입비) 데이터에 추가
@@ -2827,16 +2854,89 @@ document.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => {
     if (e.target.id === 'addExpenseBtn' || e.target.closest('#addExpenseBtn') || e.target.id === 'addExpenseBtnTop' || e.target.closest('#addExpenseBtnTop')) {
         if (marginElements.addItemModal) {
-            // 모달 재사용 - 비용 모드로 표시
             marginElements.addItemModal.dataset.mode = 'expense';
             marginElements.addItemModal.classList.remove('hidden');
             if (marginElements.itemDate) {
                 marginElements.itemDate.value = toLocalDateStr(new Date());
             }
-            // 모달 제목 변경
             const modalTitle = marginElements.addItemModal.querySelector('h3');
             if (modalTitle) modalTitle.textContent = '비용 추가';
+            // 카테고리 드롭다운 표시 및 채우기
+            const catSel = document.getElementById('expenseCategorySelect');
+            if (catSel) {
+                catSel.classList.remove('hidden');
+                catSel.innerHTML = expenseCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+            }
+            const noteGroup = document.getElementById('itemNoteGroup');
+            if (noteGroup) noteGroup.style.display = '';
         }
+    }
+});
+
+// ── 카테고리 관리 ──
+function renderCategoryList() {
+    const container = document.getElementById('categoryList');
+    if (!container) return;
+    container.innerHTML = expenseCategories.map((cat, i) => `
+        <div class="category-manage-row">
+            <input type="text" class="form-input category-edit-input" value="${escapeHtml(cat)}" data-index="${i}" style="flex:1; padding:4px 8px; font-size:0.85rem;">
+            <button class="delete-btn category-delete-btn" data-index="${i}" style="flex-shrink:0;">🗑️</button>
+        </div>
+    `).join('');
+}
+
+document.addEventListener('click', (e) => {
+    // 카테고리 모달 열기
+    if (e.target.id === 'manageCategoryBtn' || e.target.closest('#manageCategoryBtn')) {
+        document.getElementById('categoryManageModal')?.classList.remove('hidden');
+        renderCategoryList();
+    }
+    // 카테고리 모달 닫기
+    if (e.target.id === 'closeCategoryModal') {
+        document.getElementById('categoryManageModal')?.classList.add('hidden');
+    }
+    // 카테고리 추가
+    if (e.target.id === 'addCategoryBtn') {
+        const input = document.getElementById('newCategoryInput');
+        const name = input?.value.trim();
+        if (!name) return;
+        if (expenseCategories.includes(name)) {
+            showToast('이미 존재하는 카테고리입니다.', 'error');
+            return;
+        }
+        expenseCategories.push(name);
+        saveMarginData();
+        renderCategoryList();
+        input.value = '';
+        showToast(`'${name}' 카테고리 추가`, 'success');
+    }
+    // 카테고리 삭제
+    const delBtn = e.target.closest('.category-delete-btn');
+    if (delBtn) {
+        const idx = parseInt(delBtn.dataset.index);
+        const removed = expenseCategories.splice(idx, 1)[0];
+        saveMarginData();
+        renderCategoryList();
+        showToast(`'${removed}' 카테고리 삭제`, 'success');
+    }
+});
+
+// 카테고리 이름 수정 (blur 시 저장)
+document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('category-edit-input')) {
+        const idx = parseInt(e.target.dataset.index);
+        const newName = e.target.value.trim();
+        if (!newName) return;
+        const oldName = expenseCategories[idx];
+        expenseCategories[idx] = newName;
+        // 기존 비용 데이터의 카테고리명도 일괄 변경
+        Object.values(expenseData).forEach(items => {
+            items.forEach(item => {
+                if (item.category === oldName) item.category = newName;
+            });
+        });
+        saveMarginData();
+        renderRocketTab();
     }
 });
 

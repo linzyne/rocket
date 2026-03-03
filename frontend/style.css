@@ -2027,3 +2027,32 @@ body::before {
     animation: fadeIn 0.15s ease;
     line-height: 1.6;
 }
+
+/* ========================================
+   비용 카테고리
+   ======================================== */
+.category-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--accent-primary);
+    white-space: nowrap;
+}
+
+.category-manage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.category-manage-row .form-input {
+    background: var(--bg-secondary);
+}
+
+#newCategoryInput {
+    font-size: 0.85rem;
+}

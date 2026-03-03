@@ -577,7 +577,11 @@ async def get_cached_margin():
         from db import load_data
         margin = load_data("margin_data") or {}
         expense = load_data("expense_data") or {}
-        return {"success": True, "marginData": margin, "expenseData": expense}
+        categories = load_data("expense_categories")
+        result = {"success": True, "marginData": margin, "expenseData": expense}
+        if categories is not None:
+            result["expenseCategories"] = categories
+        return result
     except Exception as e:
         print(f"⚠️ 수입/비용 캐시 로드 실패: {e}")
         return {"success": False, "marginData": {}, "expenseData": {}, "error": str(e)}
@@ -592,6 +596,8 @@ async def save_margin(data: dict):
             save_data("margin_data", data["marginData"])
         if "expenseData" in data:
             save_data("expense_data", data["expenseData"])
+        if "expenseCategories" in data:
+            save_data("expense_categories", data["expenseCategories"])
         return {"success": True}
     except Exception as e:
         print(f"⚠️ 수입/비용 저장 실패: {e}")
