@@ -2274,7 +2274,8 @@ function parseQuickInput(text) {
             // 날짜 판별: M/D 또는 M월D일
             const dateM = p.match(/^(\d{1,2})\/(\d{1,2})$/) || p.match(/^(\d{1,2})월\s*(\d{1,2})일?$/);
             if (dateM && !tabDate) {
-                const d = new Date(new Date().getFullYear(), parseInt(dateM[1]) - 1, parseInt(dateM[2]));
+                let d = new Date(new Date().getFullYear(), parseInt(dateM[1]) - 1, parseInt(dateM[2]));
+                if (d > new Date()) d.setFullYear(d.getFullYear() - 1);
                 tabDate = d.toISOString().split('T')[0];
                 continue;
             }
@@ -2308,8 +2309,8 @@ function parseQuickInput(text) {
     const datePatterns = [
         { regex: /^어제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 1); return d; }},
         { regex: /^그제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 2); return d; }},
-        { regex: /^(\d{1,2})\/(\d{1,2})\s+/, fn: (m) => new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]))},
-        { regex: /^(\d{1,2})월\s*(\d{1,2})일?\s+/, fn: (m) => new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]))},
+        { regex: /^(\d{1,2})\/(\d{1,2})\s+/, fn: (m) => { let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2])); if (d > new Date()) d.setFullYear(d.getFullYear() - 1); return d; }},
+        { regex: /^(\d{1,2})월\s*(\d{1,2})일?\s+/, fn: (m) => { let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2])); if (d > new Date()) d.setFullYear(d.getFullYear() - 1); return d; }},
     ];
 
     for (const p of datePatterns) {
