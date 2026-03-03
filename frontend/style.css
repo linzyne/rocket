@@ -1627,6 +1627,10 @@ body::before {
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-size: 0.9rem;
+    font-family: inherit;
+    resize: none;
+    overflow: hidden;
+    min-height: 36px;
 }
 
 .quick-input:focus {

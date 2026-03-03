@@ -2264,26 +2264,49 @@ function toLocalDateStr(d) {
     return `${y}-${m}-${day}`;
 }
 
+// 다양한 날짜 문자열을 Date 객체로 변환
+function parseDateStr(str) {
+    str = str.trim();
+    // "2025. 02. 21" / "2025.02.21" / "2025-02-21"
+    let m = str.match(/^(\d{4})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?$/);
+    if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+    // "25. 02. 21" / "25.02.21" (2자리 연도)
+    m = str.match(/^(\d{2})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?$/);
+    if (m) return new Date(2000 + parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+    // "M/D" / "M-D"
+    m = str.match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})$/);
+    if (m) {
+        let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
+        if (d > new Date()) d.setFullYear(d.getFullYear() - 1);
+        return d;
+    }
+    // "M월D일"
+    m = str.match(/^(\d{1,2})월\s*(\d{1,2})일?$/);
+    if (m) {
+        let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
+        if (d > new Date()) d.setFullYear(d.getFullYear() - 1);
+        return d;
+    }
+    return null;
+}
+
 function parseQuickInput(text) {
     text = text.trim();
     if (!text) return null;
 
-    // 탭 구분 형식 감지: "5/20\t105,826\t물류비" 또는 "5/20\t105826\t물류비"
+    // 탭 구분 형식 감지: "5/20\t105,826\t물류비"
     const parts = text.split('\t');
     if (parts.length >= 2) {
-        // 탭 구분 입력: 날짜, 금액, 내역 순서 (또는 날짜+금액만)
         let tabDate = null, tabAmount = null, tabDesc = null;
 
         for (const part of parts) {
             const p = part.trim();
             if (!p) continue;
 
-            // 날짜 판별: M/D 또는 M월D일
-            const dateM = p.match(/^(\d{1,2})\/(\d{1,2})$/) || p.match(/^(\d{1,2})월\s*(\d{1,2})일?$/);
-            if (dateM && !tabDate) {
-                let d = new Date(new Date().getFullYear(), parseInt(dateM[1]) - 1, parseInt(dateM[2]));
-                if (d > new Date()) d.setFullYear(d.getFullYear() - 1);
-                tabDate = toLocalDateStr(d);
+            // 날짜 판별
+            const pd = parseDateStr(p);
+            if (pd && !tabDate) {
+                tabDate = toLocalDateStr(pd);
                 continue;
             }
 
@@ -2312,10 +2335,12 @@ function parseQuickInput(text) {
     let date = toLocalDateStr(new Date());
     let remaining = text;
 
-    // 날짜 파싱: 맨 앞의 "어제", "그제", "M/D", "M월D일"
+    // 날짜 파싱: 맨 앞의 다양한 날짜 형식
     const datePatterns = [
         { regex: /^어제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 1); return d; }},
         { regex: /^그제\s+/, fn: () => { const d = new Date(); d.setDate(d.getDate() - 2); return d; }},
+        { regex: /^(\d{4})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?\s+/, fn: (m) => new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]))},
+        { regex: /^(\d{2})\s*[.\-\/]\s*(\d{1,2})\s*[.\-\/]\s*(\d{1,2})\.?\s+/, fn: (m) => new Date(2000 + parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]))},
         { regex: /^(\d{1,2})\/(\d{1,2})\s+/, fn: (m) => { let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2])); if (d > new Date()) d.setFullYear(d.getFullYear() - 1); return d; }},
         { regex: /^(\d{1,2})월\s*(\d{1,2})일?\s+/, fn: (m) => { let d = new Date(new Date().getFullYear(), parseInt(m[1]) - 1, parseInt(m[2])); if (d > new Date()) d.setFullYear(d.getFullYear() - 1); return d; }},
     ];
@@ -2362,36 +2387,56 @@ function parseQuickInput(text) {
     return { date, description, amount };
 }
 
-// 빠른 입력 처리 함수
+// 빠른 입력 처리 함수 (여러 줄 지원)
 function handleQuickAdd(inputEl, mode) {
-    const parsed = parseQuickInput(inputEl.value);
-    if (!parsed) {
+    const rawValue = inputEl.value;
+    // 줄바꿈으로 분리 (빈 줄 제외)
+    const lines = rawValue.split('\n').map(l => l.trim()).filter(l => l);
+
+    if (lines.length === 0) {
         showToast('입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
         return;
     }
 
-    const { date, description, amount } = parsed;
+    let successCount = 0;
+    let failCount = 0;
+    let lastDate = null;
 
-    if (mode === 'expense') {
-        if (!expenseData[date]) expenseData[date] = [];
-        expenseData[date].push({ description, amount: -amount, note: '' });
-    } else {
-        if (!marginData[date]) marginData[date] = [];
-        marginData[date].push({ type: '매입', description, amount: -amount });
+    for (const line of lines) {
+        const parsed = parseQuickInput(line);
+        if (!parsed) { failCount++; continue; }
+
+        const { date, description, amount } = parsed;
+
+        if (mode === 'expense') {
+            if (!expenseData[date]) expenseData[date] = [];
+            expenseData[date].push({ description, amount: -amount, note: '' });
+        } else {
+            if (!marginData[date]) marginData[date] = [];
+            marginData[date].push({ type: '매입', description, amount: -amount });
+        }
+        lastDate = date;
+        successCount++;
     }
 
-    // 현재 보고 있는 월과 동기화
-    const addedMonth = parseInt(date.split('-')[1]);
-    const addedYear = parseInt(date.split('-')[0]);
-    marginYear = addedYear;
-    marginMonth = addedMonth;
+    if (successCount === 0) {
+        showToast('입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
+        return;
+    }
+
+    // 마지막 추가 항목의 월로 동기화
+    marginYear = parseInt(lastDate.split('-')[0]);
+    marginMonth = parseInt(lastDate.split('-')[1]);
 
     saveMarginData();
     renderRocketTab();
     inputEl.value = '';
-    showToast(`${description} ${amount.toLocaleString()}원 추가 (${date})`, 'success');
+    inputEl.style.height = 'auto';
 
-    // 추가 버튼 효과
+    let msg = `${successCount}건 추가 완료`;
+    if (failCount > 0) msg += ` (${failCount}건 실패)`;
+    showToast(msg, 'success');
+
     const btn = inputEl.closest('.quick-input-bar')?.querySelector('.quick-add-btn');
     if (btn) successPop(btn);
 }
@@ -2406,9 +2451,17 @@ function successPop(btn) {
     }, 600);
 }
 
-// 빠른 입력 이벤트: Enter 키
+// textarea 자동 높이 조절
+document.addEventListener('input', (e) => {
+    if (e.target.classList.contains('quick-input') && e.target.tagName === 'TEXTAREA') {
+        e.target.style.height = 'auto';
+        e.target.style.height = e.target.scrollHeight + 'px';
+    }
+});
+
+// 빠른 입력 이벤트: Enter 키 (Shift+Enter는 줄바꿈)
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.classList.contains('quick-input')) {
+    if (e.key === 'Enter' && e.target.classList.contains('quick-input') && !e.shiftKey) {
         e.preventDefault();
         handleQuickAdd(e.target, e.target.dataset.mode);
     }
