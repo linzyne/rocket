@@ -1686,6 +1686,7 @@ document.addEventListener('click', (e) => {
 // 전체 탭 렌더링
 function renderRocketTab() {
     updateMarginPeriodLabel();
+    try { renderMonthlyDashboard(); } catch(e) { console.error('월별 대시보드 렌더 에러:', e); }
     try { renderEvidenceDateTable(); } catch(e) { console.error('증빙일 테이블 렌더 에러:', e); }
     renderIncomeSection();
     renderExpenseSection();
@@ -1915,6 +1916,46 @@ function buildDateMap_expense(year, month) {
     return map;
 }
 
+// ── 상세내역 맵 (툴팁용): { day: [{desc, amount}] } ──
+function buildDetailMap_income(year, month) {
+    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+    const map = {};
+    Object.keys(marginData).forEach(date => {
+        if (date.startsWith(monthPrefix)) {
+            const day = parseInt(date.split('-')[2]) || 0;
+            if (day > 0) {
+                if (!map[day]) map[day] = [];
+                marginData[date].forEach(item => {
+                    map[day].push({ desc: item.description || '(내역없음)', amount: item.amount });
+                });
+            }
+        }
+    });
+    return map;
+}
+
+function buildDetailMap_expense(year, month) {
+    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+    const map = {};
+    Object.keys(expenseData).forEach(date => {
+        if (date.startsWith(monthPrefix)) {
+            const day = parseInt(date.split('-')[2]) || 0;
+            if (day > 0) {
+                if (!map[day]) map[day] = [];
+                expenseData[date].forEach(item => {
+                    map[day].push({ desc: item.description || '(내역없음)', amount: item.amount, note: item.note || '' });
+                });
+            }
+        }
+    });
+    return map;
+}
+
+// HTML 속성 이스케이프
+function escapeAttr(str) {
+    return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── 📅 Table 1: 정산일 기준 테이블 렌더링 ──
 function renderSettlementDateTable() {
     const thead = document.getElementById('settlementDateHead');
@@ -1986,6 +2027,172 @@ function renderSettlementDateTable() {
         </tr>`;
 }
 
+// ── 📊 월별 손익 대시보드 렌더링 ──
+function renderMonthlyDashboard() {
+    const thead = document.getElementById('monthlyDashboardHead');
+    const tbody = document.getElementById('monthlyDashboardBody');
+    if (!thead || !tbody) return;
+
+    // 1. 존재하는 모든 증빙월 수집
+    const monthSet = new Set();
+
+    // 정산 데이터에서 증빙월 수집
+    if (deductionData && deductionData.length > 0) {
+        deductionData.forEach(row => {
+            const evDate = row['증빙일'] || row['매출발생일'] || '';
+            if (evDate) {
+                const ym = evDate.substring(0, 7); // "YYYY-MM"
+                monthSet.add(ym);
+            }
+        });
+    }
+
+    // 수입 데이터에서 월 수집
+    Object.keys(marginData).forEach(date => {
+        monthSet.add(date.substring(0, 7));
+    });
+
+    // 비용 데이터에서 월 수집
+    Object.keys(expenseData).forEach(date => {
+        monthSet.add(date.substring(0, 7));
+    });
+
+    // 광고비 데이터에서 월 수집 (광고비 월 - 1 = 증빙월)
+    if (adHistory) {
+        Object.keys(adHistory).forEach(dateStr => {
+            const adYm = dateStr.substring(0, 7);
+            const [ay, am] = adYm.split('-').map(Number);
+            let evM = am - 1, evY = ay;
+            if (evM < 1) { evM = 12; evY--; }
+            monthSet.add(`${evY}-${String(evM).padStart(2, '0')}`);
+        });
+    }
+
+    // 월 정렬 (오래된 순)
+    const months = [...monthSet].sort();
+
+    if (months.length === 0) {
+        thead.innerHTML = '';
+        tbody.innerHTML = '<tr><td style="text-align:center; padding:20px; color:var(--text-muted);">데이터가 없습니다</td></tr>';
+        return;
+    }
+
+    // 2. 헤더
+    thead.innerHTML = `<tr>
+        <th>증빙월(정산월)</th>
+        <th style="text-align:right;">정산액</th>
+        <th style="text-align:right;">수입</th>
+        <th style="text-align:right;">비용</th>
+        <th style="text-align:right;">광고비</th>
+        <th style="text-align:right;">순이익</th>
+    </tr>`;
+
+    // 3. 각 월별 데이터 계산
+    let grandSettlement = 0, grandIncome = 0, grandExpense = 0, grandAd = 0, grandProfit = 0;
+    let html = '';
+
+    months.forEach(ym => {
+        const [year, month] = ym.split('-').map(Number);
+        const monthPrefix = ym;
+
+        // 정산월 = 증빙월 + 2
+        let setM = month + 2, setY = year;
+        if (setM > 12) { setM -= 12; setY++; }
+
+        // 광고비월 = 증빙월 + 1
+        let adM = month + 1, adY = year;
+        if (adM > 12) { adM = 1; adY++; }
+        const adPrefix = `${adY}-${String(adM).padStart(2, '0')}`;
+
+        // 정산액: 증빙일 기준
+        let settlement = 0;
+        if (deductionData && deductionData.length > 0) {
+            deductionData.forEach(row => {
+                const evDate = row['증빙일'] || row['매출발생일'] || '';
+                if (evDate.startsWith(monthPrefix)) {
+                    const amtStr = row['정산금액'] || row['지급액'] || row['공제후 지급액'] || '';
+                    settlement += parseInt(amtStr.replace(/[^0-9-]/g, '')) || 0;
+                }
+            });
+        }
+
+        // 수입
+        let income = 0;
+        Object.keys(marginData).forEach(date => {
+            if (date.startsWith(monthPrefix)) {
+                marginData[date].forEach(item => { income += Math.abs(item.amount); });
+            }
+        });
+
+        // 비용
+        let expense = 0;
+        Object.keys(expenseData).forEach(date => {
+            if (date.startsWith(monthPrefix)) {
+                expenseData[date].forEach(item => { expense += Math.abs(item.amount); });
+            }
+        });
+
+        // 광고비 (증빙월 + 1)
+        let adCost = 0;
+        if (adHistory) {
+            Object.keys(adHistory).forEach(dateStr => {
+                if (dateStr.startsWith(adPrefix)) {
+                    adCost += adHistory[dateStr].ad_cost || 0;
+                }
+            });
+        }
+
+        const profit = settlement - adCost - income - expense;
+
+        grandSettlement += settlement;
+        grandIncome += income;
+        grandExpense += expense;
+        grandAd += adCost;
+        grandProfit += profit;
+
+        const profitColor = profit >= 0 ? 'var(--success)' : 'var(--danger)';
+        const hasData = settlement || income || expense || adCost;
+
+        html += `<tr class="dash-row${!hasData ? ' empty-row' : ''}" style="cursor:pointer;" data-ev-year="${year}" data-ev-month="${month}">
+            <td><strong>${year}.${month}월</strong><span style="color:var(--text-muted); font-size:0.8rem;">(${setM}월정산)</span></td>
+            <td style="text-align:right;${settlement ? ' color:var(--success); font-weight:600;' : ''}">${settlement ? settlement.toLocaleString() : '-'}</td>
+            <td style="text-align:right;${income ? ' color:var(--danger); font-weight:500;' : ''}">${income ? '-' + income.toLocaleString() : '-'}</td>
+            <td style="text-align:right;${expense ? ' color:var(--danger); font-weight:500;' : ''}">${expense ? '-' + expense.toLocaleString() : '-'}</td>
+            <td style="text-align:right;${adCost ? ' color:var(--warning); font-weight:500;' : ''}">${adCost ? '-' + adCost.toLocaleString() : '-'}</td>
+            <td style="text-align:right; color:${profitColor}; font-weight:700;">${hasData ? (profit >= 0 ? '+' : '') + profit.toLocaleString() : '-'}</td>
+        </tr>`;
+    });
+
+    // 합계 행
+    const grandProfitColor = grandProfit >= 0 ? 'var(--success)' : 'var(--danger)';
+    html += `<tr class="dash-total-row">
+        <td><strong>합계</strong></td>
+        <td style="text-align:right; color:var(--success); font-weight:700;">${grandSettlement.toLocaleString()}</td>
+        <td style="text-align:right; color:var(--danger); font-weight:700;">-${grandIncome.toLocaleString()}</td>
+        <td style="text-align:right; color:var(--danger); font-weight:700;">-${grandExpense.toLocaleString()}</td>
+        <td style="text-align:right; color:var(--warning); font-weight:700;">-${grandAd.toLocaleString()}</td>
+        <td style="text-align:right; color:${grandProfitColor}; font-weight:700; font-size:1.05rem;">${grandProfit >= 0 ? '+' : ''}${grandProfit.toLocaleString()}원</td>
+    </tr>`;
+
+    tbody.innerHTML = html;
+
+    // 4. 행 클릭 시 해당 월로 이동
+    tbody.querySelectorAll('.dash-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const y = parseInt(row.dataset.evYear);
+            const m = parseInt(row.dataset.evMonth);
+            evidenceYear = y;
+            evidenceMonth = m;
+            marginYear = y;
+            marginMonth = m;
+            renderRocketTab();
+            // 스크롤 이동
+            const evidenceCard = document.getElementById('evidenceDateTable');
+            if (evidenceCard) evidenceCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
+}
+
 // ── 📋 Table 2: 증빙일 기준 테이블 렌더링 ──
 // 증빙일 = evidenceMonth, 광고비 = evidenceMonth+1
 function renderEvidenceDateTable() {
@@ -2010,15 +2217,17 @@ function renderEvidenceDateTable() {
     const daysInAdMonth = getDaysInMonth(adYear, adMonth);
     const maxDays = Math.max(daysInEvMonth, daysInAdMonth);
 
+    const bd = 'border-right:1px dashed rgba(255,255,255,0.08);';
+
     // 헤더
     let setM2 = evM + 2, setY2 = evY;
     if (setM2 > 12) { setM2 -= 12; setY2++; }
     thead.innerHTML = `<tr>
-        <th>날짜</th>
-        <th style="text-align:right;">${evM}월 증빙(${setM2}월 정산)</th>
-        <th style="text-align:right;">${evM}월 수입</th>
-        <th style="text-align:right;">${evM}월 비용</th>
-        <th style="border-left:2px solid var(--border-color);">날짜</th>
+        <th style="${bd}">날짜</th>
+        <th style="text-align:right; ${bd}">${evM}월 증빙(${setM2}월 정산)</th>
+        <th style="text-align:right; ${bd}">${evM}월 수입</th>
+        <th style="text-align:right; ${bd}">${evM}월 비용</th>
+        <th style="border-left:2px solid var(--border-color); ${bd}">날짜</th>
         <th style="text-align:right;">${adMonth}월 광고비</th>
     </tr>`;
 
@@ -2027,6 +2236,10 @@ function renderEvidenceDateTable() {
     const incomeMap = buildDateMap_income(evY, evM);
     const expenseMap = buildDateMap_expense(evY, evM);
     const adCostMap = buildDateMap_adCost(adYear, adMonth);
+
+    // 수입/비용 상세 내역 맵 (툴팁용)
+    const incomeDetailMap = buildDetailMap_income(evY, evM);
+    const expenseDetailMap = buildDetailMap_expense(evY, evM);
 
     let totalEvidence = 0, totalIncome = 0, totalExpense = 0, totalAd = 0;
     let html = '';
@@ -2058,12 +2271,20 @@ function renderEvidenceDateTable() {
             }
         }
 
+        // 수입 상세 툴팁
+        const iDetails = incomeDetailMap[d] || [];
+        const iTooltip = iDetails.length > 0 ? ` class="has-tooltip" data-tooltip="${escapeAttr(iDetails.map(it => `${it.desc}: ${Math.abs(it.amount).toLocaleString()}원`).join('\n'))}"` : '';
+
+        // 비용 상세 툴팁
+        const exDetails = expenseDetailMap[d] || [];
+        const exTooltip = exDetails.length > 0 ? ` class="has-tooltip" data-tooltip="${escapeAttr(exDetails.map(it => `${it.desc}: ${Math.abs(it.amount).toLocaleString()}원${it.note ? ' (' + it.note + ')' : ''}`).join('\n'))}"` : '';
+
         html += `<tr${(!hasLeft && !hasRight) ? ' class="empty-row"' : ''}>
-            <td style="font-size:0.75rem;">${dateLabel}</td>
-            <td style="text-align:right;${eVal ? ' color:var(--success); font-weight:500;' : ''}">${eVal ? eVal.toLocaleString() : ''}</td>
-            <td style="text-align:right;${iVal ? ' color:var(--danger); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
-            <td style="text-align:right;${exVal ? ' color:var(--danger); font-weight:500;' : ''}">${exVal ? exVal.toLocaleString() : ''}</td>
-            <td style="border-left:2px solid var(--border-color);">${d <= daysInAdMonth ? formatDateDot(adYear, adMonth, d) : ''}</td>
+            <td style="font-size:0.75rem; ${bd}">${dateLabel}</td>
+            <td style="text-align:right; ${bd}${eVal ? ' color:var(--success); font-weight:500;' : ''}">${eVal ? eVal.toLocaleString() : ''}</td>
+            <td${iTooltip} style="text-align:right; ${bd}${iVal ? ' color:var(--danger); font-weight:500;' : ''}">${iVal ? iVal.toLocaleString() : ''}</td>
+            <td${exTooltip} style="text-align:right; ${bd}${exVal ? ' color:var(--danger); font-weight:500;' : ''}">${exVal ? exVal.toLocaleString() : ''}</td>
+            <td style="border-left:2px solid var(--border-color); ${bd}">${d <= daysInAdMonth ? formatDateDot(adYear, adMonth, d) : ''}</td>
             <td style="text-align:right;${aVal ? ' color:var(--danger); font-weight:500;' : ''}">${aVal ? aVal.toLocaleString() : ''}</td>
         </tr>`;
     }
@@ -2074,11 +2295,11 @@ function renderEvidenceDateTable() {
 
     tfoot.innerHTML = `
         <tr style="font-weight:bold; border-top:2px solid var(--primary);">
-            <td>합계</td>
-            <td style="text-align:right; color:var(--success);">${totalEvidence.toLocaleString()}</td>
-            <td style="text-align:right; color:var(--danger);">${totalIncome.toLocaleString()}</td>
-            <td style="text-align:right; color:var(--danger);">${totalExpense.toLocaleString()}</td>
-            <td style="border-left:2px solid var(--border-color);">합계</td>
+            <td style="${bd}">합계</td>
+            <td style="text-align:right; color:var(--success); ${bd}">${totalEvidence.toLocaleString()}</td>
+            <td style="text-align:right; color:var(--danger); ${bd}">${totalIncome.toLocaleString()}</td>
+            <td style="text-align:right; color:var(--danger); ${bd}">${totalExpense.toLocaleString()}</td>
+            <td style="border-left:2px solid var(--border-color); ${bd}">합계</td>
             <td style="text-align:right; color:var(--danger);">${totalAd.toLocaleString()}</td>
         </tr>
         <tr style="font-weight:bold; background:var(--bg-tertiary);">

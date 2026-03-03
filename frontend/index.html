@@ -290,6 +290,19 @@
                     </div>
                 </div>
 
+                <!-- 📊 월별 손익 대시보드 -->
+                <div class="card" style="margin-bottom: 16px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <h2>📊 월별 손익 대시보드</h2>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="ledger-table dashboard-table ledger-compact" id="monthlyDashboardTable">
+                            <thead id="monthlyDashboardHead"></thead>
+                            <tbody id="monthlyDashboardBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- 📋 증빙일 기준 -->
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header"
@@ -330,7 +343,7 @@
                         <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
                     </div>
                     <div style="overflow-x: auto;">
-                        <table class="ledger-table" style="width:100%;">
+                        <table class="ledger-table ledger-compact" style="width:100%;">
                             <thead>
                                 <tr>
                                     <th>날짜</th>
@@ -376,7 +389,7 @@
                         <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
                     </div>
                     <div style="overflow-x: auto;">
-                        <table class="ledger-table" style="width:100%;">
+                        <table class="ledger-table ledger-compact" style="width:100%;">
                             <thead>
                                 <tr>
                                     <th>날짜</th>
