@@ -1963,6 +1963,10 @@ body::before {
 }
 
 /* 대시보드·수입·비용 테이블 컴팩트 행 높이 */
+.ledger-table.ledger-compact {
+    font-size: 0.8rem;
+}
+
 .ledger-table.ledger-compact th,
 .ledger-table.ledger-compact td {
     padding: 4px 8px;
