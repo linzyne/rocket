@@ -2398,6 +2398,14 @@ function renderExpenseSection() {
     }
 
     if (sumEl) sumEl.textContent = `-${total.toLocaleString()}원`;
+
+    // 빠른 입력 카테고리 셀렉트 채우기
+    const quickCatSel = document.getElementById('quickExpenseCategorySelect');
+    if (quickCatSel) {
+        const prev = quickCatSel.value;
+        quickCatSel.innerHTML = expenseCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+        if (prev && expenseCategories.includes(prev)) quickCatSel.value = prev;
+    }
 }
 
 // ── 상단 요약 카드 업데이트 ──
@@ -2696,7 +2704,10 @@ function handleQuickAdd(inputEl, mode) {
 
         if (mode === 'expense') {
             if (!expenseData[date]) expenseData[date] = [];
-            expenseData[date].push({ description, amount: -amount, note: '', category: category || '기타 비용' });
+            // 텍스트에 카테고리>내역 형식이 있으면 그걸 우선, 없으면 셀렉트 값 사용
+            const quickCatSel = document.getElementById('quickExpenseCategorySelect');
+            const selectedCat = quickCatSel ? quickCatSel.value : '기타 비용';
+            expenseData[date].push({ description, amount: -amount, note: '', category: category || selectedCat });
         } else {
             if (!marginData[date]) marginData[date] = [];
             marginData[date].push({ type: '매입', description, amount: -amount });
