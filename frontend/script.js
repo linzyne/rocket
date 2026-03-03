@@ -2389,25 +2389,33 @@ function parseQuickInput(text) {
         }
     }
 
-    // 금액 파싱: 맨 뒤의 숫자+단위 (만, 천, 원)
-    // "3만원", "2만5천원", "15000", "10만", "5천원", "2만5천"
-    const amountRegex = /(\d+만\s*\d*천?\s*\d*원?|\d+천\s*\d*원?|\d+원|\d+)\s*$/;
-    const amountMatch = remaining.match(amountRegex);
+    // 금액 파싱: 끝 또는 앞에서 찾기
+    // "테스트 2,000", "2,000 테스트", "포장재 3만원", "105,826원 물류비"
+    const amountPatterns = [
+        /(\d[\d,]*만\s*\d*천?\s*\d*원?|\d[\d,]*천\s*\d*원?|\d[\d,]*원|\d[\d,]+)\s*$/,   // 끝에서
+        /^(\d[\d,]*만\s*\d*천?\s*\d*원?|\d[\d,]*천\s*\d*원?|\d[\d,]*원|\d[\d,]+)\s+/,   // 앞에서
+    ];
+
+    let amountMatch = null;
+    let usedPattern = null;
+    for (const pat of amountPatterns) {
+        amountMatch = remaining.match(pat);
+        if (amountMatch) { usedPattern = pat; break; }
+    }
     if (!amountMatch) return null;
 
-    const amountStr = amountMatch[1].replace(/\s/g, '');
+    const amountRaw = amountMatch[1].replace(/,/g, '').replace(/\s/g, '');
     let amount = 0;
 
-    const manMatch = amountStr.match(/(\d+)만/);
-    const cheonMatch = amountStr.match(/(\d+)천/);
-    const plainMatch = amountStr.replace(/만|천|원/g, '').match(/\d+$/);
+    const manMatch = amountRaw.match(/(\d+)만/);
+    const cheonMatch = amountRaw.match(/(\d+)천/);
+    const plainMatch = amountRaw.replace(/만|천|원/g, '').match(/\d+$/);
 
     if (manMatch) amount += parseInt(manMatch[1]) * 10000;
     if (cheonMatch) amount += parseInt(cheonMatch[1]) * 1000;
     if (!manMatch && !cheonMatch && plainMatch) {
         amount = parseInt(plainMatch[0]);
     } else if ((manMatch || cheonMatch) && plainMatch && plainMatch[0] !== (manMatch?.[1] || '') && plainMatch[0] !== (cheonMatch?.[1] || '')) {
-        // "2만5천500" 같은 경우 남은 숫자 처리
         const leftover = parseInt(plainMatch[0]);
         if (leftover < 1000) amount += leftover;
     }
@@ -2415,7 +2423,7 @@ function parseQuickInput(text) {
     if (amount <= 0) return null;
 
     // 내역: 금액 부분 제거 후 남은 텍스트
-    const description = remaining.replace(amountRegex, '').trim();
+    const description = remaining.replace(usedPattern, '').trim();
     if (!description) return null;
 
     return { date, description, amount };
