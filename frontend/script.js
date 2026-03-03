@@ -1685,33 +1685,32 @@ document.addEventListener('click', (e) => {
 
 // 전체 탭 렌더링
 function renderRocketTab() {
+    updateMarginPeriodLabel();
     try { renderEvidenceDateTable(); } catch(e) { console.error('증빙일 테이블 렌더 에러:', e); }
     renderIncomeSection();
     renderExpenseSection();
 }
 
-// 마진 월 표시 업데이트
+// 마진 월 표시 업데이트 (수입/비용 둘 다)
 function updateMarginPeriodLabel() {
+    const label = `${marginYear}년 ${marginMonth}월`;
     if (marginElements.marginPeriodLabel) {
-        marginElements.marginPeriodLabel.textContent = `${marginYear}년 ${marginMonth}월`;
+        marginElements.marginPeriodLabel.textContent = label;
     }
+    document.querySelectorAll('.margin-period-label').forEach(el => {
+        el.textContent = label;
+    });
 }
 
-// 마진 월 이동
+// 마진 월 이동 (수입/비용 공용)
 document.addEventListener('click', (e) => {
-    if (e.target.id === 'marginPrevMonthBtn') {
+    if (e.target.id === 'marginPrevMonthBtn' || e.target.classList.contains('margin-prev-month')) {
         marginMonth--;
-        if (marginMonth < 1) {
-            marginMonth = 12;
-            marginYear--;
-        }
+        if (marginMonth < 1) { marginMonth = 12; marginYear--; }
         renderRocketTab();
-    } else if (e.target.id === 'marginNextMonthBtn') {
+    } else if (e.target.id === 'marginNextMonthBtn' || e.target.classList.contains('margin-next-month')) {
         marginMonth++;
-        if (marginMonth > 12) {
-            marginMonth = 1;
-            marginYear++;
-        }
+        if (marginMonth > 12) { marginMonth = 1; marginYear++; }
         renderRocketTab();
     }
 });

@@ -310,13 +310,20 @@
                     </div>
                 </div>
 
-                <!-- � 수입내역(사입비) 섹션 -->
+                <!-- 수입내역(사입비) 섹션 -->
                 <div class="card" style="margin-bottom: 16px;">
-                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                         <h2>💸 수입내역 (사입비)</h2>
-                        <button class="btn btn-outline btn-sm" id="addItemBtn">
-                            <span>➕</span> 항목 추가
-                        </button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="month-selector">
+                                <button class="btn btn-icon" id="marginPrevMonthBtn">◀</button>
+                                <span class="period-label" id="marginPeriodLabel"></span>
+                                <button class="btn btn-icon" id="marginNextMonthBtn">▶</button>
+                            </div>
+                            <button class="btn btn-outline btn-sm" id="addItemBtn">
+                                <span>➕</span> 항목 추가
+                            </button>
+                        </div>
                     </div>
                     <div class="quick-input-bar">
                         <textarea class="quick-input" data-mode="income" rows="1" placeholder="예: 재고구매 10만원 / 여러 줄 붙여넣기 가능"></textarea>
@@ -351,11 +358,18 @@
 
                 <!-- � 비용내역 섹션 -->
                 <div class="card" style="margin-bottom: 16px;">
-                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                         <h2>💸 비용내역</h2>
-                        <button class="btn btn-outline btn-sm" id="addExpenseBtn">
-                            <span>➕</span> 비용 추가
-                        </button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div class="month-selector">
+                                <button class="btn btn-icon margin-prev-month">◀</button>
+                                <span class="period-label margin-period-label"></span>
+                                <button class="btn btn-icon margin-next-month">▶</button>
+                            </div>
+                            <button class="btn btn-outline btn-sm" id="addExpenseBtn">
+                                <span>➕</span> 비용 추가
+                            </button>
+                        </div>
                     </div>
                     <div class="quick-input-bar">
                         <textarea class="quick-input" data-mode="expense" rows="1" placeholder="예: 포장재 3만원 / 여러 줄 붙여넣기 가능"></textarea>
