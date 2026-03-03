@@ -76,8 +76,7 @@
         <section class="result-section hidden" id="resultSection">
             <!-- 탭 메뉴 -->
             <div class="tab-menu">
-                <button class="tab-btn active" data-tab="dashboard">📊 대시보드</button>
-                <button class="tab-btn" data-tab="stock">📦 재고</button>
+                <button class="tab-btn active" data-tab="stock">📦 재고</button>
                 <button class="tab-btn" data-tab="ad">📢 광고비</button>
                 <button class="tab-btn" data-tab="deduction">📋 정산내역</button>
                 <button class="tab-btn" data-tab="margin">📈 손익현황</button>
@@ -86,100 +85,8 @@
                 </button>
             </div>
 
-            <!-- 대시보드 탭 컨텐츠 -->
-            <div class="tab-content active" id="dashboardTab">
-                <div class="result-header">
-                    <div class="result-title" style="flex-wrap:wrap; gap:12px;">
-                        <h2>📊 상품 대시보드</h2>
-                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                            <input type="date" id="dashStartDate"
-                                style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-primary); font-size:0.85rem;">
-                            <span style="color:var(--text-muted);">~</span>
-                            <input type="date" id="dashEndDate"
-                                style="padding:6px 10px; border-radius:8px; border:1px solid var(--border-color); background:var(--card-bg); color:var(--text-primary); font-size:0.85rem;">
-                            <button class="btn btn-outline btn-sm dash-period-btn active" id="dashYesterdayBtn"
-                                style="padding:5px 12px;">어제</button>
-                            <button class="btn btn-outline btn-sm dash-period-btn" id="dashTodayBtn"
-                                style="padding:5px 12px;">오늘</button>
-                            <button class="btn btn-outline btn-sm dash-period-btn" id="dashWeekBtn"
-                                style="padding:5px 12px;">7일</button>
-                            <button class="btn btn-outline btn-sm dash-period-btn" id="dashMonthBtn"
-                                style="padding:5px 12px;">이번달</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 대시보드 요약 카드 -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon">🛒</div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="dashTotalSales">0</span>
-                            <span class="stat-label">총 판매</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">📢</div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="dashAdSales">0</span>
-                            <span class="stat-label">광고 판매</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">🌱</div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="dashOrganicSales">0</span>
-                            <span class="stat-label">자연 판매</span>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon">💸</div>
-                        <div class="stat-info">
-                            <span class="stat-value" id="dashTotalAdCost">0원</span>
-                            <span class="stat-label">총 광고비</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 대시보드 테이블 -->
-                <div class="card">
-                    <div class="table-container" style="overflow-x:auto;">
-                        <table class="data-table" style="width:100%; table-layout:fixed;">
-                            <colgroup>
-                                <col style="width:28%;">
-                                <col style="width:9%;">
-                                <col style="width:9%;">
-                                <col style="width:9%;">
-                                <col style="width:9%;">
-                                <col style="width:12%;">
-                                <col style="width:9%;">
-                                <col style="width:9%;">
-                            </colgroup>
-                            <thead>
-                                <tr>
-                                    <th style="text-align:left;">상품명</th>
-                                    <th style="text-align:right;">총 판매량</th>
-                                    <th style="text-align:right;">광고 판매량</th>
-                                    <th style="text-align:right;">자연 판매량</th>
-                                    <th style="text-align:right;">재고량</th>
-                                    <th style="text-align:right;">광고비</th>
-                                    <th style="text-align:right;">ROAS</th>
-                                    <th style="text-align:right;">전환율</th>
-                                </tr>
-                            </thead>
-                            <tbody id="dashboardTableBody">
-                                <tr>
-                                    <td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);">
-                                        데이터가 없습니다.</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
             <!-- 재고 탭 컨텐츠 -->
-            <div class="tab-content" id="stockTab">
+            <div class="tab-content active" id="stockTab">
                 <!-- 헤더 영역 -->
                 <div class="result-header">
                     <div class="result-title">
@@ -412,7 +319,7 @@
                         </button>
                     </div>
                     <div class="quick-input-bar">
-                        <input type="text" class="quick-input" data-mode="income" placeholder="예: 재고구매 10만원, 2/15 샘플 3만원">
+                        <input type="text" class="quick-input" data-mode="income" placeholder="예: 재고구매 10만원, 5/20	100,000	재고구매">
                         <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
                     </div>
                     <div style="overflow-x: auto;">
@@ -451,7 +358,7 @@
                         </button>
                     </div>
                     <div class="quick-input-bar">
-                        <input type="text" class="quick-input" data-mode="expense" placeholder="예: 포장재 3만원, 어제 택배비 5천원">
+                        <input type="text" class="quick-input" data-mode="expense" placeholder="예: 포장재 3만원, 5/20	105,826	물류비">
                         <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
                     </div>
                     <div style="overflow-x: auto;">

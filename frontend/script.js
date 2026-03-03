@@ -1544,9 +1544,7 @@ document.addEventListener('click', (e) => {
         }
 
         // 탭별 추가 로직
-        if (tabName === 'dashboard') {
-            if (typeof renderDashboard === 'function') renderDashboard();
-        } else if (tabName === 'margin') {
+        if (tabName === 'margin') {
             loadCachedDeductionAndRender();
         } else if (tabName === 'ad') {
             if (typeof renderAdTab === 'function') setTimeout(renderAdTab, 0);
@@ -2262,6 +2260,46 @@ document.addEventListener('click', (e) => {
 function parseQuickInput(text) {
     text = text.trim();
     if (!text) return null;
+
+    // 탭 구분 형식 감지: "5/20\t105,826\t물류비" 또는 "5/20\t105826\t물류비"
+    const parts = text.split('\t');
+    if (parts.length >= 2) {
+        // 탭 구분 입력: 날짜, 금액, 내역 순서 (또는 날짜+금액만)
+        let tabDate = null, tabAmount = null, tabDesc = null;
+
+        for (const part of parts) {
+            const p = part.trim();
+            if (!p) continue;
+
+            // 날짜 판별: M/D 또는 M월D일
+            const dateM = p.match(/^(\d{1,2})\/(\d{1,2})$/) || p.match(/^(\d{1,2})월\s*(\d{1,2})일?$/);
+            if (dateM && !tabDate) {
+                const d = new Date(new Date().getFullYear(), parseInt(dateM[1]) - 1, parseInt(dateM[2]));
+                tabDate = d.toISOString().split('T')[0];
+                continue;
+            }
+
+            // 금액 판별: 콤마 포함 숫자 또는 순수 숫자
+            const amtStr = p.replace(/,/g, '').replace(/원$/, '');
+            if (/^\d+$/.test(amtStr) && !tabAmount) {
+                tabAmount = parseInt(amtStr);
+                continue;
+            }
+
+            // 나머지는 내역
+            if (!tabDesc) {
+                tabDesc = p;
+            }
+        }
+
+        if (tabAmount && tabAmount > 0) {
+            return {
+                date: tabDate || new Date().toISOString().split('T')[0],
+                description: tabDesc || '기타',
+                amount: tabAmount
+            };
+        }
+    }
 
     let date = new Date().toISOString().split('T')[0];
     let remaining = text;
