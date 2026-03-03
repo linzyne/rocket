@@ -2257,6 +2257,13 @@ document.addEventListener('click', (e) => {
 });
 
 // ── 한 줄 파싱 입력 ──
+function toLocalDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 function parseQuickInput(text) {
     text = text.trim();
     if (!text) return null;
@@ -2276,7 +2283,7 @@ function parseQuickInput(text) {
             if (dateM && !tabDate) {
                 let d = new Date(new Date().getFullYear(), parseInt(dateM[1]) - 1, parseInt(dateM[2]));
                 if (d > new Date()) d.setFullYear(d.getFullYear() - 1);
-                tabDate = d.toISOString().split('T')[0];
+                tabDate = toLocalDateStr(d);
                 continue;
             }
 
@@ -2295,14 +2302,14 @@ function parseQuickInput(text) {
 
         if (tabAmount && tabAmount > 0) {
             return {
-                date: tabDate || new Date().toISOString().split('T')[0],
+                date: tabDate || toLocalDateStr(new Date()),
                 description: tabDesc || '기타',
                 amount: tabAmount
             };
         }
     }
 
-    let date = new Date().toISOString().split('T')[0];
+    let date = toLocalDateStr(new Date());
     let remaining = text;
 
     // 날짜 파싱: 맨 앞의 "어제", "그제", "M/D", "M월D일"
@@ -2317,7 +2324,7 @@ function parseQuickInput(text) {
         const match = remaining.match(p.regex);
         if (match) {
             const d = p.fn(match);
-            date = d.toISOString().split('T')[0];
+            date = toLocalDateStr(d);
             remaining = remaining.replace(match[0], '');
             break;
         }
