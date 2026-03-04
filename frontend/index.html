@@ -80,7 +80,6 @@
                 <button class="tab-btn" data-tab="ad">📢 광고비</button>
                 <button class="tab-btn" data-tab="deduction">📋 정산내역</button>
                 <button class="tab-btn" data-tab="margin">📈 손익현황</button>
-                <button class="tab-btn" data-tab="dashboard">📊 대시보드</button>
                 <button class="btn btn-primary btn-sm" id="fetchAllDataBtn" style="margin-left: auto;">
                     <span>🔄</span> 전체 데이터 수집
                 </button>
@@ -275,8 +274,13 @@
             <div class="tab-content" id="marginTab">
                 <!-- 헤더 영역 -->
                 <div class="result-header">
-                    <div class="result-title">
-                        <h2>📈 손익현황</h2>
+                    <div class="result-title" style="display:flex; align-items:center; gap:12px;">
+                        <button class="btn btn-outline btn-sm" id="plViewAllBtn">전체</button>
+                        <div class="month-selector">
+                            <button class="btn btn-icon margin-prev-month">◀</button>
+                            <span class="period-label margin-period-label" style="font-size:1.1rem; font-weight:700;"></span>
+                            <button class="btn btn-icon margin-next-month">▶</button>
+                        </div>
                     </div>
                     <div class="result-actions" style="display:flex; gap:8px;">
                         <button class="btn btn-outline btn-sm" id="addItemBtnTop">
@@ -296,6 +300,15 @@
                     </div>
                 </div>
 
+                <!-- 📊 전체(연도별) 손익계산서 (기본 숨김) -->
+                <div id="plViewAllContainer" class="card" style="display:none; margin-bottom:16px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2>📋 연간 손익계산서</h2>
+                        <span id="plYearLabel" style="color:var(--text-secondary); font-size:0.9rem;"></span>
+                    </div>
+                    <div id="plYearContent"></div>
+                </div>
+
                 <!-- 📊 월별 손익 대시보드 -->
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -313,7 +326,7 @@
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h2>📋 손익계산서</h2>
-                        <span id="plMonthLabel" style="color:var(--text-secondary); font-size:0.9rem;"></span>
+                        <span class="period-label margin-period-label" style="color:var(--text-secondary); font-size:0.9rem;"></span>
                     </div>
                     <div id="plStatementContent"></div>
                 </div>
@@ -322,12 +335,8 @@
                 <div class="card" style="margin-bottom: 16px;">
                     <div class="card-header"
                         style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                        <h2>📋 증빙일 기준</h2>
-                        <div class="month-selector">
-                            <button class="btn btn-icon" id="evidencePrevMonthBtn">◀</button>
-                            <span class="period-label" id="evidencePeriodLabel"></span>
-                            <button class="btn btn-icon" id="evidenceNextMonthBtn">▶</button>
-                        </div>
+                        <h2>📋 정산</h2>
+                        <span class="period-label margin-period-label" style="color:var(--text-secondary); font-size:0.9rem;"></span>
                     </div>
                     <div style="overflow-x: auto;">
                         <table class="ledger-table compact-table" id="evidenceDateTable">
@@ -343,11 +352,7 @@
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                         <h2>💸 수입내역 (사입비)</h2>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="month-selector">
-                                <button class="btn btn-icon" id="marginPrevMonthBtn">◀</button>
-                                <span class="period-label" id="marginPeriodLabel"></span>
-                                <button class="btn btn-icon" id="marginNextMonthBtn">▶</button>
-                            </div>
+                            <span class="period-label margin-period-label" style="color:var(--text-secondary); font-size:0.9rem;"></span>
                             <button class="btn btn-outline btn-sm" id="addItemBtn">
                                 <span>➕</span> 항목 추가
                             </button>
@@ -389,11 +394,7 @@
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                         <h2>💸 비용내역</h2>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="month-selector">
-                                <button class="btn btn-icon margin-prev-month">◀</button>
-                                <span class="period-label margin-period-label"></span>
-                                <button class="btn btn-icon margin-next-month">▶</button>
-                            </div>
+                            <span class="period-label margin-period-label" style="color:var(--text-secondary); font-size:0.9rem;"></span>
                             <button class="btn btn-outline btn-sm" id="manageCategoryBtn" style="font-size:0.75rem;">
                                 <span>⚙️</span> 카테고리
                             </button>
@@ -436,22 +437,6 @@
                     </div>
                 </div>
             </div> <!-- marginTab 끝 -->
-
-            <!-- 📊 대시보드 탭 -->
-            <div class="tab-content" id="dashboardTab">
-                <div class="result-header">
-                    <div class="result-title">
-                        <h2>📊 대시보드</h2>
-                    </div>
-                </div>
-                <div class="card" style="margin-bottom: 16px;">
-                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2>📋 연간 손익계산서</h2>
-                        <span id="plYearLabel" style="color:var(--text-secondary); font-size:0.9rem;"></span>
-                    </div>
-                    <div id="plYearContent"></div>
-                </div>
-            </div>
         </section>
 
         <!-- 에러 섹션 -->

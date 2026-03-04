@@ -1507,8 +1507,6 @@ let expenseCategories = [...DEFAULT_CATEGORIES];
 let marginYear = new Date().getFullYear();
 let marginMonth = new Date().getMonth() + 1;
 // 증빙일 기준 표 전용 월 (독립적으로 변경 가능)
-let evidenceYear = new Date().getFullYear();
-let evidenceMonth = new Date().getMonth() + 1;
 
 // 마진 관련 DOM 요소 (동적 바인딩)
 const marginElements = {
@@ -1620,8 +1618,6 @@ document.addEventListener('click', (e) => {
             if (typeof updateStats === 'function') updateStats();
         } else if (tabName === 'deduction') {
             if (typeof renderDeductionTable === 'function') renderDeductionTable();
-        } else if (tabName === 'dashboard') {
-            if (typeof renderYearPLStatement === 'function') renderYearPLStatement();
         }
     }
 });
@@ -1666,47 +1662,35 @@ async function loadCachedDeductionAndRender() {
 
 // deductionData에서 정산일이 가장 많은 달을 자동 감지
 function autoDetectMarginMonth() {
-    if (!deductionData || deductionData.length === 0) return;
-    const monthCounts = {};
-    deductionData.forEach(row => {
-        const d = row['정산일'] || '';
-        if (d) {
-            const ym = d.substring(0, 7); // "YYYY-MM"
-            monthCounts[ym] = (monthCounts[ym] || 0) + 1;
-        }
-    });
-    let bestMonth = '';
-    let bestCount = 0;
-    Object.keys(monthCounts).forEach(ym => {
-        if (monthCounts[ym] > bestCount) {
-            bestCount = monthCounts[ym];
-            bestMonth = ym;
-        }
-    });
-    if (bestMonth) {
-        const parts = bestMonth.split('-');
-        marginYear = parseInt(parts[0]);
-        marginMonth = parseInt(parts[1]);
-    }
-    // 증빙일은 현재 달의 2달 전으로 고정
+    // 증빙일 기준: 현재 달 - 2를 기본값으로 사용
     const now = new Date();
-    let evM = now.getMonth() + 1 - 2; // 현재 달 - 2
+    let evM = now.getMonth() + 1 - 2;
     let evY = now.getFullYear();
     if (evM < 1) { evM += 12; evY--; }
-    evidenceYear = evY;
-    evidenceMonth = evM;
+    marginYear = evY;
+    marginMonth = evM;
 }
 
-// 증빙일 표 월 이동
+// "전체" 버튼: 연도별 합산 손익계산서 토글
+let plViewAll = false;
 document.addEventListener('click', (e) => {
-    if (e.target.id === 'evidencePrevMonthBtn') {
-        evidenceMonth--;
-        if (evidenceMonth < 1) { evidenceMonth = 12; evidenceYear--; }
-        renderEvidenceDateTable();
-    } else if (e.target.id === 'evidenceNextMonthBtn') {
-        evidenceMonth++;
-        if (evidenceMonth > 12) { evidenceMonth = 1; evidenceYear++; }
-        renderEvidenceDateTable();
+    if (e.target.id === 'plViewAllBtn') {
+        plViewAll = !plViewAll;
+        e.target.classList.toggle('active', plViewAll);
+        if (plViewAll) {
+            // 월별 섹션 숨기고 전체 보기
+            document.querySelectorAll('#marginTab .card').forEach(card => card.style.display = 'none');
+            const allContainer = document.getElementById('plViewAllContainer');
+            if (allContainer) {
+                allContainer.style.display = '';
+                renderYearPLStatement();
+            }
+        } else {
+            // 월별 섹션 복원
+            document.querySelectorAll('#marginTab .card').forEach(card => card.style.display = '');
+            const allContainer = document.getElementById('plViewAllContainer');
+            if (allContainer) allContainer.style.display = 'none';
+        }
     }
 });
 
@@ -2209,8 +2193,6 @@ function renderMonthlyDashboard() {
         row.addEventListener('click', () => {
             const y = parseInt(row.dataset.evYear);
             const m = parseInt(row.dataset.evMonth);
-            evidenceYear = y;
-            evidenceMonth = m;
             marginYear = y;
             marginMonth = m;
             renderRocketTab();
@@ -2357,12 +2339,9 @@ function buildPLCardHTML(data) {
 // ── 📋 손익현황 탭: 현재 월 손익계산서 ──
 function renderPLStatement() {
     const container = document.getElementById('plStatementContent');
-    const label = document.getElementById('plMonthLabel');
     if (!container) return;
 
     const ym = `${marginYear}-${String(marginMonth).padStart(2, '0')}`;
-    if (label) label.textContent = `${marginYear}년 ${marginMonth}월`;
-
     const data = collectPLData(ym);
     container.innerHTML = buildPLCardHTML(data);
 }
@@ -2419,24 +2398,20 @@ function renderYearPLStatement() {
 }
 
 // ── 📋 Table 2: 증빙일 기준 테이블 렌더링 ──
-// 증빙일 = evidenceMonth, 광고비 = evidenceMonth+1
+// 정산 테이블 (증빙일 기준) - marginMonth/marginYear 사용
 function renderEvidenceDateTable() {
     const thead = document.getElementById('evidenceDateHead');
     const tbody = document.getElementById('evidenceDateBody');
     const tfoot = document.getElementById('evidenceDateFoot');
     if (!thead || !tbody || !tfoot) return;
 
-    const evM = evidenceMonth;
-    const evY = evidenceYear;
+    const evM = marginMonth;
+    const evY = marginYear;
 
     // 광고비는 증빙일 다음달
     let adMonth = evM + 1;
     let adYear = evY;
     if (adMonth > 12) { adMonth = 1; adYear++; }
-
-    // 라벨 업데이트
-    const labelEl = document.getElementById('evidencePeriodLabel');
-    if (labelEl) labelEl.textContent = `${evY}년 ${evM}월`;
 
     const daysInEvMonth = getDaysInMonth(evY, evM);
     const daysInAdMonth = getDaysInMonth(adYear, adMonth);
