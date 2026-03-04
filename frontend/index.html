@@ -80,6 +80,7 @@
                 <button class="tab-btn" data-tab="ad">📢 광고비</button>
                 <button class="tab-btn" data-tab="deduction">📋 정산내역</button>
                 <button class="tab-btn" data-tab="margin">📈 손익현황</button>
+                <button class="tab-btn" data-tab="dashboard">📊 대시보드</button>
                 <button class="btn btn-primary btn-sm" id="fetchAllDataBtn" style="margin-left: auto;">
                     <span>🔄</span> 전체 데이터 수집
                 </button>
@@ -308,17 +309,13 @@
                     </div>
                 </div>
 
-                <!-- 📋 손익계산서 -->
+                <!-- 📋 손익계산서 (현재 월) -->
                 <div class="card" style="margin-bottom: 16px;">
-                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h2>📋 손익계산서</h2>
+                        <span id="plMonthLabel" style="color:var(--text-secondary); font-size:0.9rem;"></span>
                     </div>
-                    <div style="overflow-x: auto;">
-                        <table class="ledger-table dashboard-table ledger-compact" id="plStatementTable">
-                            <thead id="plStatementHead"></thead>
-                            <tbody id="plStatementBody"></tbody>
-                        </table>
-                    </div>
+                    <div id="plStatementContent"></div>
                 </div>
 
                 <!-- 📋 증빙일 기준 -->
@@ -439,6 +436,22 @@
                     </div>
                 </div>
             </div> <!-- marginTab 끝 -->
+
+            <!-- 📊 대시보드 탭 -->
+            <div class="tab-content" id="dashboardTab">
+                <div class="result-header">
+                    <div class="result-title">
+                        <h2>📊 대시보드</h2>
+                    </div>
+                </div>
+                <div class="card" style="margin-bottom: 16px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2>📋 연간 손익계산서</h2>
+                        <span id="plYearLabel" style="color:var(--text-secondary); font-size:0.9rem;"></span>
+                    </div>
+                    <div id="plYearContent"></div>
+                </div>
+            </div>
         </section>
 
         <!-- 에러 섹션 -->

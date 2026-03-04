@@ -1620,6 +1620,8 @@ document.addEventListener('click', (e) => {
             if (typeof updateStats === 'function') updateStats();
         } else if (tabName === 'deduction') {
             if (typeof renderDeductionTable === 'function') renderDeductionTable();
+        } else if (tabName === 'dashboard') {
+            if (typeof renderYearPLStatement === 'function') renderYearPLStatement();
         }
     }
 });
@@ -2219,15 +2221,160 @@ function renderMonthlyDashboard() {
     });
 }
 
-// ── 📋 손익계산서 렌더링 ──
+// ── 📋 손익계산서 데이터 수집 (공통) ──
+function collectPLData(monthPrefix) {
+    const ym = monthPrefix;
+    const [year, month] = ym.split('-').map(Number);
+    let adM = month + 1, adY = year;
+    if (adM > 12) { adM = 1; adY++; }
+    const adPrefix = `${adY}-${String(adM).padStart(2, '0')}`;
+
+    // 정산액
+    let settlement = 0;
+    if (deductionData && deductionData.length > 0) {
+        deductionData.forEach(row => {
+            const evDate = row['증빙일'] || row['매출발생일'] || '';
+            if (evDate.startsWith(ym)) {
+                const amtStr = row['정산금액'] || row['지급액'] || row['공제후 지급액'] || '';
+                settlement += parseInt(amtStr.replace(/[^0-9-]/g, '')) || 0;
+            }
+        });
+    }
+
+    // 수입(사입비)
+    let income = 0;
+    Object.keys(marginData).forEach(date => {
+        if (date.startsWith(ym)) {
+            marginData[date].forEach(item => { income += Math.abs(item.amount); });
+        }
+    });
+
+    // 비용 - 카테고리별
+    const expByCat = {};
+    Object.keys(expenseData).forEach(date => {
+        if (date.startsWith(ym)) {
+            expenseData[date].forEach(item => {
+                const cat = item.category || '기타 비용';
+                expByCat[cat] = (expByCat[cat] || 0) + Math.abs(item.amount);
+            });
+        }
+    });
+
+    // 광고비
+    let adCost = 0;
+    if (adHistory) {
+        Object.keys(adHistory).forEach(dateStr => {
+            if (dateStr.startsWith(adPrefix)) {
+                adCost += adHistory[dateStr].ad_cost || 0;
+            }
+        });
+    }
+
+    return { settlement, adCost, income, expByCat };
+}
+
+// ── 📋 좌우 2컬럼 손익계산서 HTML 생성 ──
+function buildPLCardHTML(data) {
+    const { settlement, adCost, income, expByCat } = data;
+
+    // 사용된 카테고리 (expenseCategories 순서 우선)
+    const usedCats = new Set(Object.keys(expByCat));
+    const orderedCats = expenseCategories.filter(c => usedCats.has(c));
+    usedCats.forEach(c => { if (!orderedCats.includes(c)) orderedCats.push(c); });
+
+    const expTotal = Object.values(expByCat).reduce((s, v) => s + v, 0);
+    const totalExpense = adCost + income + expTotal;
+    const profit = settlement - totalExpense;
+
+    const fmt = (v) => v ? v.toLocaleString() : '-';
+
+    // 지출 항목 목록
+    const expenseItems = [];
+    if (adCost) expenseItems.push({ label: '광고비', amount: adCost });
+    if (income) expenseItems.push({ label: '수입(사입비)', amount: income });
+    orderedCats.forEach(cat => {
+        if (expByCat[cat]) expenseItems.push({ label: cat, amount: expByCat[cat] });
+    });
+
+    // 좌우 높이 맞추기: 매출 쪽에 빈 행 채우기
+    const revenueItems = [{ label: '정산금액', amount: settlement }];
+    const maxRows = Math.max(revenueItems.length, expenseItems.length);
+
+    const makeItemRow = (item) => {
+        if (!item) return `<tr><td>&nbsp;</td><td></td></tr>`;
+        const color = item.amount > 0 ? '' : 'color:var(--text-muted);';
+        return `<tr>
+            <td style="padding:6px 12px; color:var(--text-secondary);">${item.label}</td>
+            <td style="padding:6px 12px; text-align:right; ${color}">${fmt(item.amount)}원</td>
+        </tr>`;
+    };
+
+    let leftRows = '', rightRows = '';
+    for (let i = 0; i < maxRows; i++) {
+        leftRows += makeItemRow(revenueItems[i] || null);
+        rightRows += makeItemRow(expenseItems[i] || null);
+    }
+
+    const profitColor = profit >= 0 ? 'var(--success)' : 'var(--danger)';
+    const profitSign = profit >= 0 ? '+' : '';
+
+    return `
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0; border-top:1px solid var(--border-color);">
+        <!-- 매출 -->
+        <div style="border-right:1px solid var(--border-color); padding:12px 0;">
+            <div style="padding:8px 12px; font-weight:700; font-size:0.95rem; color:var(--success);">매출</div>
+            <table style="width:100%; border-collapse:collapse;">
+                <tbody>${leftRows}</tbody>
+                <tfoot>
+                    <tr style="border-top:2px solid var(--border-color);">
+                        <td style="padding:8px 12px; font-weight:700;">총매출</td>
+                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--success);">${fmt(settlement)}원</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        <!-- 지출 -->
+        <div style="padding:12px 0;">
+            <div style="padding:8px 12px; font-weight:700; font-size:0.95rem; color:var(--danger);">지출</div>
+            <table style="width:100%; border-collapse:collapse;">
+                <tbody>${rightRows}</tbody>
+                <tfoot>
+                    <tr style="border-top:2px solid var(--border-color);">
+                        <td style="padding:8px 12px; font-weight:700;">총지출</td>
+                        <td style="padding:8px 12px; text-align:right; font-weight:700; color:var(--danger);">-${fmt(totalExpense)}원</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    <!-- 총이익 -->
+    <div style="border-top:3px double var(--border-color); padding:12px 16px; display:flex; justify-content:space-between; align-items:center; background:rgba(99,102,241,0.05);">
+        <span style="font-weight:700; font-size:1.05rem;">총이익</span>
+        <span style="font-weight:700; font-size:1.1rem; color:${profitColor};">${profitSign}${fmt(profit)}원</span>
+    </div>`;
+}
+
+// ── 📋 손익현황 탭: 현재 월 손익계산서 ──
 function renderPLStatement() {
-    const thead = document.getElementById('plStatementHead');
-    const tbody = document.getElementById('plStatementBody');
-    if (!thead || !tbody) return;
+    const container = document.getElementById('plStatementContent');
+    const label = document.getElementById('plMonthLabel');
+    if (!container) return;
 
-    // 1. 존재하는 모든 증빙월 수집 (renderMonthlyDashboard와 동일 로직)
+    const ym = `${marginYear}-${String(marginMonth).padStart(2, '0')}`;
+    if (label) label.textContent = `${marginYear}년 ${marginMonth}월`;
+
+    const data = collectPLData(ym);
+    container.innerHTML = buildPLCardHTML(data);
+}
+
+// ── 📊 대시보드 탭: 1년치 합산 손익계산서 ──
+function renderYearPLStatement() {
+    const container = document.getElementById('plYearContent');
+    const label = document.getElementById('plYearLabel');
+    if (!container) return;
+
+    // 존재하는 모든 증빙월 수집
     const monthSet = new Set();
-
     if (deductionData && deductionData.length > 0) {
         deductionData.forEach(row => {
             const evDate = row['증빙일'] || row['매출발생일'] || '';
@@ -2247,158 +2394,28 @@ function renderPLStatement() {
 
     const months = [...monthSet].sort();
     if (months.length === 0) {
-        thead.innerHTML = '';
-        tbody.innerHTML = '<tr><td style="text-align:center; padding:20px; color:var(--text-muted);">데이터가 없습니다</td></tr>';
+        container.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">데이터가 없습니다</div>';
         return;
     }
 
-    // 2. 각 월별 데이터 수집
-    const monthData = {}; // { "2025-03": { settlement, adCost, income, expenseByCategory: { 택배비: xxx, ... } } }
+    // 기간 표시
+    const first = months[0].split('-').map(Number);
+    const last = months[months.length - 1].split('-').map(Number);
+    if (label) label.textContent = `${first[0]}년 ${first[1]}월 ~ ${last[0]}년 ${last[1]}월 (${months.length}개월)`;
 
+    // 전체 월 합산
+    const totals = { settlement: 0, adCost: 0, income: 0, expByCat: {} };
     months.forEach(ym => {
-        const [year, month] = ym.split('-').map(Number);
-        let adM = month + 1, adY = year;
-        if (adM > 12) { adM = 1; adY++; }
-        const adPrefix = `${adY}-${String(adM).padStart(2, '0')}`;
-
-        // 정산액
-        let settlement = 0;
-        if (deductionData && deductionData.length > 0) {
-            deductionData.forEach(row => {
-                const evDate = row['증빙일'] || row['매출발생일'] || '';
-                if (evDate.startsWith(ym)) {
-                    const amtStr = row['정산금액'] || row['지급액'] || row['공제후 지급액'] || '';
-                    settlement += parseInt(amtStr.replace(/[^0-9-]/g, '')) || 0;
-                }
-            });
-        }
-
-        // 수입(사입비)
-        let income = 0;
-        Object.keys(marginData).forEach(date => {
-            if (date.startsWith(ym)) {
-                marginData[date].forEach(item => { income += Math.abs(item.amount); });
-            }
+        const d = collectPLData(ym);
+        totals.settlement += d.settlement;
+        totals.adCost += d.adCost;
+        totals.income += d.income;
+        Object.entries(d.expByCat).forEach(([cat, amt]) => {
+            totals.expByCat[cat] = (totals.expByCat[cat] || 0) + amt;
         });
-
-        // 비용 - 카테고리별 분류
-        const expByCat = {};
-        Object.keys(expenseData).forEach(date => {
-            if (date.startsWith(ym)) {
-                expenseData[date].forEach(item => {
-                    const cat = item.category || '기타 비용';
-                    expByCat[cat] = (expByCat[cat] || 0) + Math.abs(item.amount);
-                });
-            }
-        });
-
-        // 광고비
-        let adCost = 0;
-        if (adHistory) {
-            Object.keys(adHistory).forEach(dateStr => {
-                if (dateStr.startsWith(adPrefix)) {
-                    adCost += adHistory[dateStr].ad_cost || 0;
-                }
-            });
-        }
-
-        monthData[ym] = { settlement, adCost, income, expByCat };
     });
 
-    // 3. 사용된 비용 카테고리 수집
-    const usedCategories = new Set();
-    months.forEach(ym => {
-        Object.keys(monthData[ym].expByCat).forEach(cat => usedCategories.add(cat));
-    });
-    // expenseCategories 순서 우선, 나머지 뒤에
-    const orderedCategories = expenseCategories.filter(c => usedCategories.has(c));
-    usedCategories.forEach(c => { if (!orderedCategories.includes(c)) orderedCategories.push(c); });
-
-    // 4. 월 레이블
-    const monthLabels = months.map(ym => {
-        const [y, m] = ym.split('-').map(Number);
-        let setM = m + 2, setY = y;
-        if (setM > 12) { setM -= 12; setY++; }
-        return `${y}.${m}월`;
-    });
-
-    // 5. 헤더
-    thead.innerHTML = `<tr>
-        <th style="min-width:120px;">항목</th>
-        ${monthLabels.map(l => `<th style="text-align:right;">${l}</th>`).join('')}
-        <th style="text-align:right;">합계</th>
-    </tr>`;
-
-    // 6. 행 생성 헬퍼
-    const colCount = months.length + 2;
-
-    function makeRow(label, values, style) {
-        const total = values.reduce((s, v) => s + v, 0);
-        const cls = style || '';
-        const isSection = cls.includes('section');
-        const isSubtotal = cls.includes('subtotal');
-        const isProfit = cls.includes('profit');
-
-        let labelStyle = '';
-        let valColor = '';
-        if (isSection) labelStyle = 'font-weight:700; font-size:0.9rem;';
-        if (isSubtotal) labelStyle = 'font-weight:600; padding-left:8px;';
-        if (isProfit) labelStyle = 'font-weight:700; font-size:0.95rem;';
-
-        const formatVal = (v) => {
-            if (v === 0) return '-';
-            if (cls.includes('revenue')) return `<span style="color:var(--success); font-weight:600;">${v.toLocaleString()}</span>`;
-            if (cls.includes('expense')) return `<span style="color:var(--danger);">-${Math.abs(v).toLocaleString()}</span>`;
-            if (isProfit) return `<span style="color:${v >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">${v >= 0 ? '+' : ''}${v.toLocaleString()}</span>`;
-            return v.toLocaleString();
-        };
-
-        const totalFormatted = formatVal(total);
-        const rowBorder = (isSubtotal || isProfit) ? 'border-top:1px solid var(--border-color);' : '';
-        const rowBg = isProfit ? 'background:rgba(99,102,241,0.05);' : '';
-
-        return `<tr style="${rowBorder}${rowBg}">
-            <td style="${labelStyle}">${label}</td>
-            ${values.map(v => `<td style="text-align:right;">${formatVal(v)}</td>`).join('')}
-            <td style="text-align:right; font-weight:600;">${totalFormatted}</td>
-        </tr>`;
-    }
-
-    function makeSeparator() {
-        return `<tr style="height:4px;"><td colspan="${colCount}" style="padding:0; border-bottom:2px solid var(--border-color);"></td></tr>`;
-    }
-
-    // 7. 테이블 본문
-    let html = '';
-
-    // 【매출】
-    html += makeRow('매출 (정산액)', months.map(ym => monthData[ym].settlement), 'section revenue');
-    html += makeSeparator();
-
-    // 【지출】
-    html += `<tr><td style="font-weight:700; font-size:0.9rem; padding-top:8px;">지출</td>${'<td></td>'.repeat(months.length + 1)}</tr>`;
-    html += makeRow('  광고비', months.map(ym => monthData[ym].adCost), 'expense');
-    html += makeRow('  수입(사입비)', months.map(ym => monthData[ym].income), 'expense');
-
-    // 비용 카테고리별
-    orderedCategories.forEach(cat => {
-        html += makeRow(`  ${cat}`, months.map(ym => monthData[ym].expByCat[cat] || 0), 'expense');
-    });
-
-    // 지출 소계
-    const expenseSubtotals = months.map(ym => {
-        const d = monthData[ym];
-        const expTotal = Object.values(d.expByCat).reduce((s, v) => s + v, 0);
-        return d.adCost + d.income + expTotal;
-    });
-    html += makeRow('지출 소계', expenseSubtotals, 'subtotal expense');
-    html += makeSeparator();
-
-    // 【순이익】
-    const profits = months.map((ym, i) => monthData[ym].settlement - expenseSubtotals[i]);
-    html += makeRow('순이익', profits, 'profit');
-
-    tbody.innerHTML = html;
+    container.innerHTML = buildPLCardHTML(totals);
 }
 
 // ── 📋 Table 2: 증빙일 기준 테이블 렌더링 ──
