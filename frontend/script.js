@@ -1676,19 +1676,26 @@ let plViewAll = false;
 document.addEventListener('click', (e) => {
     if (e.target.id === 'plViewAllBtn') {
         plViewAll = !plViewAll;
-        e.target.classList.toggle('active', plViewAll);
+        const btn = e.target;
+        const allContainer = document.getElementById('plViewAllContainer');
+        const monthNav = document.querySelector('#marginTab .result-title .month-selector');
         if (plViewAll) {
+            btn.textContent = '월별';
+            btn.classList.add('active');
             // 월별 섹션 숨기고 전체 보기
-            document.querySelectorAll('#marginTab .card').forEach(card => card.style.display = 'none');
-            const allContainer = document.getElementById('plViewAllContainer');
+            document.querySelectorAll('#marginTab .pl-monthly').forEach(el => el.style.display = 'none');
+            if (monthNav) monthNav.style.display = 'none';
             if (allContainer) {
                 allContainer.style.display = '';
+                renderMonthlyDashboard();
                 renderYearPLStatement();
             }
         } else {
+            btn.textContent = '전체';
+            btn.classList.remove('active');
             // 월별 섹션 복원
-            document.querySelectorAll('#marginTab .card').forEach(card => card.style.display = '');
-            const allContainer = document.getElementById('plViewAllContainer');
+            document.querySelectorAll('#marginTab .pl-monthly').forEach(el => el.style.display = '');
+            if (monthNav) monthNav.style.display = '';
             if (allContainer) allContainer.style.display = 'none';
         }
     }
