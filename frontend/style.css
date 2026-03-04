@@ -164,6 +164,7 @@ body::before {
 .card-header h2 {
     font-size: 1.5rem;
     margin-bottom: var(--spacing-xs);
+    color: var(--text-primary);
 }
 
 .card-header p {
