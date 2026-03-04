@@ -2667,7 +2667,6 @@ function parseQuickInput(text) {
 
     // 내역: 금액 부분 제거 후 남은 텍스트
     const rawDesc = remaining.replace(usedPattern, '').trim();
-    if (!rawDesc) return null;
 
     // 카테고리 파싱: "카테고리>내역" 형식
     let category = null;
@@ -2688,7 +2687,7 @@ function handleQuickAdd(inputEl, mode) {
     const lines = rawValue.split('\n').map(l => l.trim()).filter(l => l);
 
     if (lines.length === 0) {
-        showToast('입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
+        showToast(mode === 'ad' ? '입력 형식: 날짜 금액 (예: 3/1 15000)' : '입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
         return;
     }
 
@@ -2702,7 +2701,17 @@ function handleQuickAdd(inputEl, mode) {
 
         const { date, description, amount, category } = parsed;
 
-        if (mode === 'expense') {
+        // 수입/비용 모드에서는 내역 필수
+        if (mode !== 'ad' && !description) { failCount++; continue; }
+
+        if (mode === 'ad') {
+            // 광고비 모드: 금액만 ad_cost로 저장 (기존 데이터 있으면 ad_cost만 덮어씀)
+            if (adHistory[date]) {
+                adHistory[date].ad_cost = amount;
+            } else {
+                adHistory[date] = { ad_cost: amount, ad_sales: 0, total_sales: 0, roas: 0, conversion_rate: 0 };
+            }
+        } else if (mode === 'expense') {
             if (!expenseData[date]) expenseData[date] = [];
             // 텍스트에 카테고리>내역 형식이 있으면 그걸 우선, 없으면 셀렉트 값 사용
             const quickCatSel = document.getElementById('quickExpenseCategorySelect');
@@ -2717,16 +2726,22 @@ function handleQuickAdd(inputEl, mode) {
     }
 
     if (successCount === 0) {
-        showToast('입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
+        showToast(mode === 'ad' ? '입력 형식: 날짜 금액 (예: 3/1 15000)' : '입력 형식: 내역 금액 (예: 포장재 3만원)', 'error');
         return;
     }
 
     // 마지막 추가 항목의 월로 동기화
-    marginYear = parseInt(lastDate.split('-')[0]);
-    marginMonth = parseInt(lastDate.split('-')[1]);
-
-    saveMarginData();
-    renderRocketTab();
+    if (mode === 'ad') {
+        // 광고비 모드: 광고 탭 월 동기화 + 별도 저장
+        currentAdMonthDate = new Date(parseInt(lastDate.split('-')[0]), parseInt(lastDate.split('-')[1]) - 1, 1);
+        saveHistory();
+        renderAdTab();
+    } else {
+        marginYear = parseInt(lastDate.split('-')[0]);
+        marginMonth = parseInt(lastDate.split('-')[1]);
+        saveMarginData();
+        renderRocketTab();
+    }
     inputEl.value = '';
     inputEl.style.height = 'auto';
 
@@ -3711,7 +3726,7 @@ function updateAdTable() {
     monthlyData.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     if (monthlyData.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">데이터가 없습니다.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 2rem;">데이터가 없습니다.</td></tr>';
         return;
     }
 
@@ -3746,13 +3761,41 @@ function updateAdTable() {
 
         row.innerHTML = `
             <td>${arrowSpan}${item.date}</td>
-            <td class="td-stock">${adCost.toLocaleString()}원</td>
+            <td class="td-stock ad-cost-cell" data-date="${item.date}" style="cursor:text;">${adCost.toLocaleString()}원</td>
             <td class="td-stock">${adSales.toLocaleString()}개</td>
             <td class="td-stock">${sales.toLocaleString()}개</td>
             <td class="td-stock">${roas}%</td>
             <td class="td-stock">${cvr}%</td>
+            <td><button class="delete-btn ad-delete-btn" data-date="${item.date}">🗑️</button></td>
         `;
         tableBody.appendChild(row);
+
+        // 광고비 셀 인라인 수정
+        const costCell = row.querySelector('.ad-cost-cell');
+        costCell.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (costCell.querySelector('input')) return;
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.value = adCost;
+            input.style.cssText = 'width:100%; padding:2px 4px; font-size:inherit; text-align:right; background:var(--bg-primary); color:var(--text-primary); border:1px solid var(--accent-primary); border-radius:4px;';
+            costCell.textContent = '';
+            costCell.appendChild(input);
+            input.focus();
+            input.select();
+            const save = () => {
+                const newVal = parseInt(input.value) || 0;
+                if (adHistory[item.date]) {
+                    adHistory[item.date].ad_cost = newVal;
+                } else {
+                    adHistory[item.date] = { ad_cost: newVal, ad_sales: 0, total_sales: 0, roas: 0, conversion_rate: 0 };
+                }
+                saveHistory();
+                updateAdTable();
+            };
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); });
+        });
 
         // 상품별 상세 내역 추가 (기본 숨김, 클릭하면 펼쳐짐)
         if (hasProducts) {
@@ -3762,7 +3805,7 @@ function updateAdTable() {
             detailRow.classList.add('ad-detail-row');
 
             const detailCell = document.createElement('td');
-            detailCell.colSpan = 6;
+            detailCell.colSpan = 7;
             detailCell.style.padding = '0';
 
             let detailHtml = `
@@ -3840,8 +3883,22 @@ function updateAdTable() {
         <td class="td-stock">${totalSales.toLocaleString()}개</td>
         <td class="td-stock">${avgRoas}%</td>
         <td class="td-stock">${avgCvr}%</td>
+        <td></td>
     `;
     tableFoot.appendChild(footRow);
+
+    // 삭제 버튼 이벤트
+    tableBody.querySelectorAll('.ad-delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dateStr = btn.dataset.date;
+            if (!confirm(`${dateStr} 광고비 데이터를 삭제하시겠습니까?`)) return;
+            delete adHistory[dateStr];
+            saveHistory();
+            updateAdTable();
+            showToast(`${dateStr} 광고비 삭제`, 'success');
+        });
+    });
 }
 
 // 이벤트 리스너 설정

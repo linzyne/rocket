@@ -189,6 +189,10 @@
 
                 <!-- 광고비 테이블 -->
                 <div class="card table-card">
+                    <div class="quick-input-bar">
+                        <textarea class="quick-input" data-mode="ad" rows="1" placeholder="예: 3/1 15000 / 여러 줄 붙여넣기 가능"></textarea>
+                        <button class="btn btn-primary btn-sm quick-add-btn">추가</button>
+                    </div>
                     <div class="table-container">
                         <table class="stock-table" id="adTable">
                             <thead>
@@ -199,6 +203,7 @@
                                     <th class="th-stock">총 판매수</th>
                                     <th class="th-stock">광고 수익률(ROAS)</th>
                                     <th class="th-stock">전환율</th>
+                                    <th style="width:50px;">삭제</th>
                                 </tr>
                             </thead>
                             <tbody id="adTableBody">
