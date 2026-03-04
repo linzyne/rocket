@@ -604,6 +604,30 @@ async def save_margin(data: dict):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/save-ad")
+async def save_ad(data: dict):
+    """프론트엔드에서 수동 입력/수정/삭제한 광고 데이터를 Supabase에 저장합니다."""
+    try:
+        from db import save_data, load_data
+        ad_history = data.get("adHistory", {})
+        deleted_dates = data.get("deletedDates", [])
+        existing = load_data("ad_history") or {}
+        # 수동 입력/수정 데이터 병합 (스크래핑된 products 등 보존)
+        for date_str, ad_data in ad_history.items():
+            if date_str in existing:
+                existing[date_str].update(ad_data)
+            else:
+                existing[date_str] = ad_data
+        # 명시적으로 삭제 요청된 날짜만 제거
+        for date_str in deleted_dates:
+            existing.pop(date_str, None)
+        save_data("ad_history", existing)
+        return {"success": True}
+    except Exception as e:
+        print(f"⚠️ 광고 데이터 저장 실패: {e}")
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000)

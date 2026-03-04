@@ -126,7 +126,7 @@ function loadHistory() {
     }
 }
 
-function saveHistory() {
+function saveHistory(deletedAdDates) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stockHistory));
         localStorage.setItem(RECEIVING_STORAGE_KEY, JSON.stringify(receivingHistory));
@@ -136,6 +136,16 @@ function saveHistory() {
     } catch (e) {
         console.error('기록 저장 실패:', e);
     }
+    // 광고 데이터를 서버(Supabase)에도 동기화
+    const payload = { adHistory };
+    if (deletedAdDates && deletedAdDates.length > 0) {
+        payload.deletedDates = deletedAdDates;
+    }
+    fetch(`${REMOTE_API}/api/save-ad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    }).catch(e => console.warn('서버 광고 데이터 저장 실패:', e));
 }
 
 /**
@@ -177,9 +187,14 @@ async function loadAllCachedData() {
             });
             loaded++;
         } else if (key === 'ad' && data && typeof data === 'object') {
-            // 날짜별 광고 데이터 대체
+            // 날짜별 광고 데이터 병합 (로컬 수동 입력값 보존, 서버 상세 데이터 추가)
             Object.keys(data).forEach(date => {
-                adHistory[date] = data[date];
+                if (!adHistory[date]) {
+                    adHistory[date] = data[date];
+                } else {
+                    // 로컬 데이터 유지하면서 서버의 추가 필드(products 등) 병합
+                    adHistory[date] = { ...data[date], ...adHistory[date] };
+                }
             });
             loaded++;
         } else if (key === 'deduction' && Array.isArray(data) && data.length > 0) {
@@ -3894,7 +3909,7 @@ function updateAdTable() {
             const dateStr = btn.dataset.date;
             if (!confirm(`${dateStr} 광고비 데이터를 삭제하시겠습니까?`)) return;
             delete adHistory[dateStr];
-            saveHistory();
+            saveHistory([dateStr]);
             updateAdTable();
             showToast(`${dateStr} 광고비 삭제`, 'success');
         });
